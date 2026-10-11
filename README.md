@@ -56,7 +56,7 @@ xmake run libgarena_unittest --gtest_brief=1
 
 ```lua
 -- 你的 xmake.lua：依赖包仓库注册与 libca 版本须与 libgarena 一致
-add_requires("libca 0.0.13", {configs = {modules = "core"}})
+add_requires("libca 0.0.15", {configs = {modules = "core"}})
 includes("libs/libgarena")  -- 本仓路径
 
 target("myapp")

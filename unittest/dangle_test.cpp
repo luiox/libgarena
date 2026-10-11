@@ -14,7 +14,7 @@ const auto kAborted = ::testing::ExitedWithCode(3);
 const auto kAborted = ::testing::KilledBySignal(6);
 #endif
 
-void flushStderr() {
+void flush_stderr() {
     fflush(stderr);
 }
 
@@ -33,7 +33,7 @@ TEST(DangleTest, OutstandingBorrowAbortsAtReset) {
         void* p = a.alloc(32, 8);
         GARENA_MARK_BORROWED(p);
         a.reset();  // 应 abort
-        flushStderr();
+        flush_stderr();
         exit(0);
     }, kDied, "dangle");
 #else

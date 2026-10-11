@@ -50,7 +50,8 @@ libgarena v2 提供**双层**原语：
   「reset 后继续用旧指针」大概率立即崩溃。**检查边界**：毒化只提高崩溃概率，不是
   确定性检查；确定性的「死而可检」在 Layer B（gen 句柄）；
 - `owns()` 为基址有序数组 + 二分 + 最近命中缓存（缺陷#8；chunk 按基址插入有序，
-  创建是低频事件）。**注意**：`owns()` 仅限 debug 断言路径调用，不入 release 热路径。
+  创建是低频事件）。**注意**：`owns()` 仅限诊断/归属判别等低频路径（release 的
+  诊断性使用亦合法），不得进入 alloc/create 逐元素分配热路径。
 
 ## debug 悬垂检查（dangle_check.hpp）
 
@@ -85,10 +86,9 @@ v2 计数化（缺陷#3）：登记表为 指针 → 借用计数 的 map（v0.1
 4. **校验分级**：`try_get`/`alive` 全构建校验，slot/gen 失配返回 nullptr（预期失败
    路径）；`get` 失配 **abort**（打印期望/实际 owner-slot-gen，**release 也启用**），
    确定性失败优于 UB——use-after-free 在 release 即可检。**不提供 operator[]**。
-   **owner 失配（跨实例使用句柄）按冻结规格结构性拒绝**：debug 一律 abort（冻结规格
-   §2.3.2-1 表述，见上文校验分级）；
-   §2.3.2-1）；release 下 try_get/alive 返回 false/nullptr、get abort、remove 返回
-   false。
+   **owner 失配（跨实例使用句柄）结构性拒绝**：debug 一律 abort（try_get/get/
+   alive/remove 都是「使用」）；release 下 try_get/alive 返回 false/nullptr、
+   get abort、remove 返回 false。
 5. **clear()**：全部置死 + 每槽 gen+1，保留存储。与 Layer A reset 的关键差异：clear
    后旧句柄**必然**校验失败，而 reset 后旧指针不可检。
 6. **异常安全**：create 中 T 构造抛出 → 槽置死、gen+1、重入空闲链后重抛，不发布
@@ -117,8 +117,8 @@ GHandle 采用业界常见的 generation handle 方言：字段顺序与宽度�
 
 - v0.1：Arena + TypedArena + dangle_check（17 测试）。
 - v2（2026-09-09，本文）：Layer A 缺陷闭环（#1–#12）+ Layer B
-  GenerationalArena/GHandle 新增。public 头不再注入 `using ca::usize`（缺陷#10；
-  `garena::usize` 留 deprecated 过渡别名）；悬空文档引用修正（缺陷#11）。
+  GenerationalArena/GHandle 新增。public 头不再注入 `using ca::usize`（缺陷#10，
+  未保留过渡别名，调用方显式写 `ca::usize`）；悬空文档引用修正（缺陷#11）。
 
 ## 验证记录
 
@@ -130,3 +130,8 @@ GHandle 采用业界常见的 generation handle 方言：字段顺序与宽度�
     reset 0xDD 毒化）；跑毕已切回默认 release 配置；
   - ASan（`xmake f --with_tests=y --with_asan=y`，全局插桩）：43 用例零报告
     （linux/gcc、clang 路径；MSVC ASan 不做泄漏检测）。
+- 2026-10-11（质量审查）：注释/文档与实现对齐（createArray 值初始化语义、
+  `owns()` 使用口径、悬空文档引用）+ 测试补缺（`GenerationalArena::owns`、
+  createArray 值初始化 pin、`TypedArena::createArray`）+ ensureSlots 槽位 u32
+  域防御检查——windows/MSVC 双构建实跑：release 46 用例、debug 49 用例全绿，
+  死亡测试全部实跑。

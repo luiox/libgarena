@@ -43,7 +43,7 @@ int ThrowingCtor::throw_at = 0;
 int ThrowingCtor::seen = 0;
 int ThrowingCtor::live = 0;
 
-void resetThrowing(int throw_at) {
+void reset_throwing(int throw_at) {
     ThrowingCtor::throw_at = throw_at;
     ThrowingCtor::seen = 0;
     ThrowingCtor::live = 0;
@@ -204,7 +204,7 @@ TEST(GenerationTest, ForeignHandleRejectedByTryGet) {
 #ifdef NDEBUG
     EXPECT_EQ(b.try_get(h), nullptr);  ///< release：返回 nullptr
 #else
-    ///< debug：结构性拒绝 —— 使用跨实例句柄直接 abort（冻结规格 §2.3.2-1）
+    ///< debug：结构性拒绝 —— 使用跨实例句柄直接 abort（见 doc/design.md 校验分级）
     ASSERT_EXIT({ (void)b.try_get(h); }, kAborted, "garena: handle rejected.*owner mismatch");
 #endif
 }
@@ -245,7 +245,7 @@ TEST(GenerationTest, MoveTransfersOwnershipKeepsOwner) {
 
 TEST(GenerationTest, CreateExceptionDoesNotPublishHalfConstructed) {
     GenerationalArena<ThrowingCtor> pool(4);
-    resetThrowing(2);  ///< 第 1 个成功，第 2 个抛出
+    reset_throwing(2);  ///< 第 1 个成功，第 2 个抛出
     GHandle ok = pool.create(1);
     EXPECT_EQ(ThrowingCtor::live, 1);
     const auto cap = pool.capacity();
@@ -260,7 +260,7 @@ TEST(GenerationTest, CreateExceptionDoesNotPublishHalfConstructed) {
     EXPECT_EQ(ThrowingCtor::live, 1);
     EXPECT_EQ(pool.try_get(ok)->v, 1);
     ///< 异常槽（gen 已 +1）可复用，池可继续使用
-    resetThrowing(0);
+    reset_throwing(0);
     GHandle again = pool.create(3);
     EXPECT_EQ(again.slot, 1u);     ///< 复用抛出时的那个槽
     EXPECT_EQ(again.gen, 1u);      ///< 失败使槽 gen+1
@@ -270,7 +270,7 @@ TEST(GenerationTest, CreateExceptionDoesNotPublishHalfConstructed) {
 
 TEST(GenerationTest, CreateExceptionOnFreshSlotKeepsPoolUsable) {
     GenerationalArena<ThrowingCtor> pool(4);
-    resetThrowing(1);  ///< 第 1 个就抛
+    reset_throwing(1);  ///< 第 1 个就抛
     try {
         pool.create(1);
         FAIL() << "expected throw";
@@ -278,7 +278,7 @@ TEST(GenerationTest, CreateExceptionOnFreshSlotKeepsPoolUsable) {
     }
     EXPECT_EQ(pool.size(), 0u);
     EXPECT_EQ(ThrowingCtor::live, 0);
-    resetThrowing(0);
+    reset_throwing(0);
     GHandle h = pool.create(7);
     EXPECT_EQ(h.slot, 0u);
     EXPECT_EQ(h.gen, 1u);  ///< 失败使槽 gen+1
@@ -331,6 +331,20 @@ TEST(GenerationTest, ReservePreextendsWithoutMovingStorage) {
     ///< 预扩后的空槽可正常 create
     for (int i = 0; i < 999; ++i) pool.create(i);
     EXPECT_EQ(pool.size(), 1000u);
+}
+
+/// owns：范围判定口径（与 Layer A 一致）——块内未用区域也属本池；外部/跨池指针为 false。
+TEST(GenerationTest, OwnsChecksBlockStorageRange) {
+    GenerationalArena<Item> pool(4);
+    GHandle h = pool.create(1);
+    Item* p = pool.try_get(h);
+    ASSERT_NE(p, nullptr);
+    EXPECT_TRUE(pool.owns(p));
+    EXPECT_TRUE(pool.owns(p + 2));  ///< 同块内未使用槽位空间：范围判定命中
+    int local = 0;
+    EXPECT_FALSE(pool.owns(&local));
+    GenerationalArena<Item> other;
+    EXPECT_FALSE(other.owns(p));
 }
 
 // ---------------------------------------------------------------------------

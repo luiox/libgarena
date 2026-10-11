@@ -41,3 +41,15 @@ TEST(TypedArenaTest, ArenaAccessor) {
     garena::TypedArena<Node> ta(arena);
     EXPECT_EQ(&ta.arena(), &arena);
 }
+
+TEST(TypedArenaTest, CreateArrayForwardsAndValueInitializes) {
+    garena::Arena arena;
+    garena::TypedArena<int> ta(arena);
+    int* arr = ta.createArray(4);
+    ASSERT_NE(arr, nullptr);
+    for (int i = 0; i < 4; ++i) {
+        EXPECT_EQ(arr[i], 0) << "elem " << i;  // 值初始化语义与 Arena::createArray 一致
+    }
+    EXPECT_TRUE(ta.owns(arr));
+    EXPECT_EQ(arena.used_bytes(), 4 * sizeof(int));
+}

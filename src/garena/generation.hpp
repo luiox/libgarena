@@ -17,10 +17,9 @@
 /// 适用场景：需要逐个增删、以稳定身份被引用的长命对象（指令、基本块、Label、
 /// 缓存项）；有共同死亡点的临时物请用 Layer A 的 garena::Arena（arena.hpp）。
 ///
-/// API 冻结与语义基线：doc_ai/memory-governance-plan.md 附录 A；
-/// 句柄语义同构 libjbc CodeDom 的 InsnId（refactor/jbc-context 分支
-/// libs/libjbc/src/jbc/ir/code_dom.hpp:53-63，owner/slot/gen 三元组，
-/// 字段顺序与宽度一致，已 ASan/对拍验证）。
+/// API 冻结与语义基线：doc/design.md（Layer B 硬契约）与 doc/capabilities.md；
+/// 句柄为 owner/slot/gen 三元组方言，与上层字节码 IR 的 InsnId 同构（字段顺序
+/// 与宽度一致），见 doc/design.md「句柄方言」。
 
 namespace garena {
 
@@ -314,6 +313,12 @@ void GenerationalArena<T>::ensureSlots(ca::usize n) {
     // 块数对齐：需要的新块数（新块整块追加）
     const ca::usize old_cap = slots_.size();
     const ca::usize new_cap = num_blocks * block_slots_;
+    ///< 槽位下标域为 u32（GHandle.slot / 空闲链 next_free）：new_cap 越过
+    ///< kInvalidSlot 后下方 static_cast 会静默截断、破坏空闲链——先判后扩，
+    ///< 与上方块数溢出检查同族（契约 8）
+    if (new_cap > static_cast<ca::usize>(kInvalidSlot)) {
+        abortSizeOverflow();
+    }
     try {
         blocks_.reserve(new_cap / block_slots_);
         slots_.resize(new_cap);

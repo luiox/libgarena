@@ -12,7 +12,7 @@
 ///     唯一例外：alloc(0, align) 返回 nullptr（空请求无地址语义——v2 起改约，
 ///     v0.1 的"可用作哨兵"注释作废）。
 ///
-/// 选型判据见 doc_ai/str-ownership-spec.md §2：有共同死亡点 → Arena；
+/// 选型判据见 doc/design.md：有共同死亡点 → Arena；
 /// 需要逐个增删、以稳定身份被引用 → GenerationalArena（generation.hpp）；
 /// 确需共享可变所有权 → 引用计数，不要硬套本库。
 
@@ -70,7 +70,8 @@ public:
         return obj;
     }
 
-    /// 构造 T 的数组（元素个数运行期决定，默认初始化）。non-trivial 析构同样被接管。
+    /// 构造 T 的数组（元素个数运行期决定，值初始化：标量元素零初始化）。
+    /// non-trivial 析构同样被接管。
     /// count == 0 返回 nullptr。异常安全（缺陷#5）：第 k 个元素构造抛出时，
     /// 逆序析构已构造的前 k-1 个、把 bump 指针回退到分配前位置后重抛——
     /// 不泄漏半构造数组（含数组存储本身）。

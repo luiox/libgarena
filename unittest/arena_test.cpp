@@ -17,7 +17,7 @@ struct Trivial {
     int x;
 };
 
-static int gDtorOrder = 0;
+static int g_dtor_order = 0;
 
 struct NonTrivial {
     int id;
@@ -25,7 +25,7 @@ struct NonTrivial {
     explicit NonTrivial(int i, int* slot = nullptr) : id(i), dtor_order_slot(slot) {}
     NonTrivial() : id(-1), dtor_order_slot(nullptr) {}
     ~NonTrivial() {
-        if (dtor_order_slot) *dtor_order_slot = ++gDtorOrder;
+        if (dtor_order_slot) *dtor_order_slot = ++g_dtor_order;
     }
 };
 
@@ -75,7 +75,7 @@ TEST(ArenaTest, OwnsRejectsForeign) {
 }
 
 TEST(ArenaTest, CreateRunsNonTrivialDtorsOnResetInReverseOrder) {
-    gDtorOrder = 0;
+    g_dtor_order = 0;
     int order[3] = {0, 0, 0};
     {
         garena::Arena a;
@@ -91,7 +91,7 @@ TEST(ArenaTest, CreateRunsNonTrivialDtorsOnResetInReverseOrder) {
 }
 
 TEST(ArenaTest, DestructorRunsAtScopeExit) {
-    gDtorOrder = 0;
+    g_dtor_order = 0;
     int order = 0;
     {
         garena::Arena a;
@@ -101,7 +101,7 @@ TEST(ArenaTest, DestructorRunsAtScopeExit) {
 }
 
 TEST(ArenaTest, CreateArrayRunsAllDtors) {
-    gDtorOrder = 0;
+    g_dtor_order = 0;
     std::vector<int> slots(10, 0);
     {
         garena::Arena a;
@@ -192,6 +192,16 @@ TEST(ArenaTest, AllocZeroReturnsNullptr) {
     EXPECT_EQ(a.createArray<int>(0), nullptr);
 }
 
+/// createArray 为值初始化（T()）：标量元素零初始化，非不确定值（语义 pin，与头文件注释同源）。
+TEST(ArenaTest, CreateArrayValueInitializesElements) {
+    garena::Arena a;
+    int* arr = a.createArray<int>(8);
+    ASSERT_NE(arr, nullptr);
+    for (int i = 0; i < 8; ++i) {
+        EXPECT_EQ(arr[i], 0) << "elem " << i;
+    }
+}
+
 /// 单次超大分配（> 首块）：必须整块放下，不回绕、不返回空。
 TEST(ArenaTest, SingleHugeAllocationBeyondFirstChunk) {
     garena::Arena a(256);
@@ -271,7 +281,7 @@ TEST(ArenaTest, DtorRegistrationDiagnostics) {
 TEST(ArenaTest, OwnsBinaryOverManyChunks) {
     garena::Arena a(256);
     std::vector<void*> ptrs;
-    for (int i = 0; i < 64; ++i) {  /// 64KB 首块翻倍增长，足以跨多 chunk
+    for (int i = 0; i < 64; ++i) {  /// 首块 256B（下限钳制）容量翻倍增长，足以跨多 chunk
         ptrs.push_back(a.alloc(64, 16));
     }
     for (void* p : ptrs) EXPECT_TRUE(a.owns(p));

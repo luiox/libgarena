@@ -14,8 +14,8 @@ nullptr（空请求无地址语义）。**全部设施非线程安全**（单线
 | `Arena(Arena&&)` / `operator=(Arena&&)` | move-only，chunk 所有权整体转移 |
 | `void* alloc(usize bytes, usize align)` | 对齐 bump 分配，地址终身稳定；`bytes==0` → nullptr；溢出 → abort |
 | `T* create<T>(args...)` | bump 构造单对象；non-trivial 析构由 arena 接管 |
-| `T* createArray<T>(usize count)` | bump 构造默认初始化数组；构造抛出 → 逆序析构+回退 bump 后重抛 |
-| `bool owns(const void* p)` | 指针是否落在本 arena chunk 内（基址有序二分+缓存；仅 debug 断言路径用） |
+| `T* createArray<T>(usize count)` | bump 构造值初始化数组（标量元素零初始化）；构造抛出 → 逆序析构+回退 bump 后重抛 |
+| `bool owns(const void* p)` | 指针是否落在本 arena chunk 内（基址有序二分+缓存；仅限低频诊断/归属判别路径，不入分配热路径） |
 | `usize used_bytes()` / `usize total_bytes()` | 已用 / chunk 总容量 |
 | `usize dtor_registrations()` | 当前 dtor 表条数（诊断） |
 | `usize dtor_overhead_bytes()` | dtor 表占用字节（披露：trivial 零元数据；non-trivial 每对象/每数组 ≈32B @x64） |

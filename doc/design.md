@@ -154,3 +154,14 @@ GHandle 采用业界常见的 generation handle 方言：字段顺序与宽度�
   createArray 值初始化 pin、`TypedArena::createArray`）+ ensureSlots 槽位 u32
   域防御检查——windows/MSVC 双构建实跑：release 46 用例、debug 49 用例全绿，
   死亡测试全部实跑。
+- 2026-10-11（测试 skip 审计）：两配置全量实跑——release 46 / debug 49 全绿，
+  输出无 [ SKIPPED ]、无 disabled 计数；用例数差恒为 3 = debug 专属的计数化
+  悬垂用例（`#ifndef NDEBUG`：部分归还检出、全归还干净、下溢 abort）。死亡
+  测试分级实跑：分配溢出 / get 失配 / 跨实例 get 为全构建；跨实例 try_get
+  release 断言 nullptr、debug 死亡测试；dangle 借用类与 reset 毒化仅 debug
+  实跑（release 分支 GTEST_SUCCEED 为既定配置门控，非缺陷掩盖）。排查结论：
+  unittest 5 文件全部收录于 xmake.lua（无孤儿）；try/catch 均带 try 内
+  FAIL、循环断言定长或前置 ASSERT 守卫、无提前 return——无空跑掩盖缺陷；
+  `#ifdef _WIN32` 仅切换死亡判定（MSVC 退出码 3 / POSIX SIGABRT），不移除
+  测试。CI（ci.yml）按默认 release 口径跑双平台，debug 为 README 约定的
+  发布前人工步骤。

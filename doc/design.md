@@ -18,6 +18,24 @@ libgarena v2 提供**双层**原语：
   稳定、gen 校验防 ABA/UAF 的生成式句柄池——需要逐个增删、以稳定身份被引用的对象
   的归宿。
 
+选型判据：有共同死亡点 → Layer A bump Arena；逐个增删 + 句柄引用 → Layer B
+GenerationalArena；确需共享可变所有权 → 引用计数（`ca::str::Utf8StringPool`，
+本库不提供）；字符串 arena → `ca::str::Utf8StringArena`（intern 去重），本库
+不包装、不平行实现。
+
+### 所有权治理三原则
+
+定位句「把内存所有权治理做成可复用的库原语」由三条原则支撑，本库逐条给出机制化
+答案（而非纪律约束）：
+
+1. **所有权结构性**：对象的寿命归属在结构上成立——「共同死亡点」的产物进 Arena，
+   逐个增删的对象进句柄池，不存在靠注释维系的第三种隐式约定；
+2. **类型可见**：`TypedArena<Node>::create`、`GenerationalArena<Insn>` + `GHandle`
+   把「产物寿命 = 池寿命」「身份 = 句柄」写进类型签名，调用点与 review 即可见；
+3. **可执行检查**：gen 校验使悬垂/ABA 确定性可检（release 生效）、debug 借用登记
+   断言（`GARENA_MARK_BORROWED/RETURNED`）、debug 下 reset 毒化——「不得使用失效
+   指针」从口头纪律变成可执行断言。
+
 ## 硬契约（Layer A: Arena）
 
 1. **地址稳定**：已分配内存永不挪动，指针在 reset()/析构 前始终有效。
@@ -80,8 +98,9 @@ v2 计数化（缺陷#3）：登记表为 指针 → 借用计数 的 map（v0.1
    `remove`/`clear`/构造失败 均使 gen+1，旧句柄立即失效，**不存在 ABA**。gen u32
    回绕需单槽 2^32 次删除，实践不可达，为记录在案的接受界。
 2. **地址稳定**：T 存储在块链（每块 block_slots 个 T，默认 1024；块 malloc 后永不
-   搬动/归还）；槽位元数据在旁路 vector，地址不对外。`T*` 在 remove(该槽) 或池析构
-   前恒定——IR 节点互指的前提。
+   搬动/归还）；槽位元数据在旁路 vector，地址不对外（每槽 12B：gen/next_free/alive，
+   x64 含填充；存储保留不归还，与 Layer A chunk 复用同哲学）。`T*` 在 remove(该槽)
+   或池析构 前恒定——IR 节点互指的前提。
 3. **O(1) 增删**：create 走空闲链或追加；remove 校验后原地析构 T、gen+1、槽入空闲链。
 4. **校验分级**：`try_get`/`alive` 全构建校验，slot/gen 失配返回 nullptr（预期失败
    路径）；`get` 失配 **abort**（打印期望/实际 owner-slot-gen，**release 也启用**），

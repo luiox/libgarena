@@ -77,3 +77,7 @@ xmake run libgarena_unittest --gtest_brief=1
 
 - `doc/design.md` — 设计契约与红线（v2 双层架构）
 - `doc/capabilities.md` — API 一览
+
+## License
+
+MIT

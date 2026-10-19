@@ -315,7 +315,9 @@ void GenerationalArena<T>::ensureSlots(ca::usize n) {
     const ca::usize new_cap = num_blocks * block_slots_;
     ///< 槽位下标域为 u32（GHandle.slot / 空闲链 next_free）：new_cap 越过
     ///< kInvalidSlot 后下方 static_cast 会静默截断、破坏空闲链——先判后扩，
-    ///< 与上方块数溢出检查同族（契约 8）
+    ///< 与上方块数溢出检查同族（契约 8）。
+    ///< == kInvalidSlot 时放行是刻意的：最大合法槽位下标为 kInvalidSlot-1，
+    ///< 与空闲链 sentinel 不重合
     if (new_cap > static_cast<ca::usize>(kInvalidSlot)) {
         abortSizeOverflow();
     }

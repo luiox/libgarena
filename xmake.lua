@@ -1,7 +1,7 @@
 -- libgarena：通用 Arena / 资源生命周期库（独立构建根）。
 --
 -- 依赖：
---   - libca（luiox-repo git 直连包）：core 为运行依赖；版本锁固定 0.0.15，
+--   - libca（luiox-repo git 直连包）：core 为运行依赖；版本锁固定 0.0.16，
 --     升级须显式换版。
 --   - gtest（xrepo，仅 --with_tests=y）。
 --
@@ -13,7 +13,7 @@
 set_languages("cxx17")
 add_rules("mode.debug", "mode.release")
 
-add_requires("libca 0.0.15", {configs = {modules = "core"}})
+add_requires("libca 0.0.16", {configs = {modules = "core"}})
 
 option("with_tests")
     set_default(false)

@@ -37,7 +37,7 @@ xmake f -m debug --with_tests=y
 xmake run libgarena_unittest
 ```
 
-CI 在 Linux 上跑 release 与 debug 全量用例，在 Windows 上跑 release 全量用例。
+CI 跑 Linux 与 Windows 全量用例；平台与配置的当前口径以 `.github/workflows/ci.yml` 为准，debug 配置以本地跑通为准。
 
 ## 硬规则
 

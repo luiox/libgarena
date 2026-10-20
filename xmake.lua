@@ -31,6 +31,12 @@ if has_config("with_tests") then
     add_requires("gtest")
 end
 
+-- ASan 要同时作用于 libgarena 与测试：只给 unittest 加 flag 时静态库仍是未插桩代码
+if has_config("with_asan") and not is_plat("windows") then
+    add_cxflags("-fsanitize=address -fno-omit-frame-pointer", {force = true})
+    add_ldflags("-fsanitize=address", {force = true})
+end
+
 target("libgarena")
     set_kind("static")
     add_packages("libca")
@@ -60,11 +66,6 @@ target("libgarena_unittest")
     end
     if is_plat("windows") then
         add_cxflags("/utf-8", {tools = "cl"})
-    end
-
-    if has_config("with_asan") and not is_plat("windows") then
-        add_cxflags("-fsanitize=address -fno-omit-frame-pointer", {force = true})
-        add_ldflags("-fsanitize=address", {force = true})
     end
 
 end

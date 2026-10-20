@@ -60,6 +60,49 @@ jobs:
       - name: Run unit tests
         run: xmake run libgarena_unittest
 
+  build-and-test-linux-debug:
+    name: build & test (linux, debug)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system deps
+        run: |
+          # cmake/ninja：xrepo 编译 gtest（cmake-based）需要。
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build
+
+      - name: Setup xmake
+        uses: xmake-io/github-action-setup-xmake@v1
+        with:
+          xmake-version: v3.0.9
+          actions-cache-folder: '.xmake-cache'
+
+      - name: Cache xrepo packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.xmake/packages
+            ~/.local/share/xmake
+          key: libgarena-xrepo-linux-debug-x64-xmake309-${{ hashFiles('xmake.lua') }}
+          restore-keys: |
+            libgarena-xrepo-linux-debug-x64-xmake309-
+
+      - name: Register luiox-repo
+        run: xmake repo --add luiox-repo https://github.com/luiox/luiox-repo.git
+
+      - name: Configure (debug, with tests)
+        run: xmake f -p linux -m debug --with_tests=y -y
+
+      - name: Build
+        run: |
+          xmake build libgarena
+          xmake build libgarena_unittest
+
+      - name: Run unit tests
+        run: xmake run libgarena_unittest
+
   build-and-test-windows:
     name: build & test (windows)
     runs-on: windows-latest

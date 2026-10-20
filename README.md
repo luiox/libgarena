@@ -71,7 +71,7 @@ target("myapp")
 |---|---|---|
 | 默认（release） | `xmake f --with_tests=y` | 日常构建 |
 | debug | `xmake f -m debug --with_tests=y` | 死亡测试（abort 路径）与悬垂断言全量覆盖，发布前必跑 |
-| ASan | `xmake f --with_tests=y --with_asan=y -p linux` | linux gcc/clang 全链插桩；MSVC 不支持该开关 |
+| ASan | `xmake f --with_tests=y --with_asan=y -p linux` | linux gcc/clang 对 libgarena 源码与测试插桩；libca 依赖库不插桩；MSVC 不支持该开关 |
 
 ```sh
 xmake build libgarena libgarena_unittest

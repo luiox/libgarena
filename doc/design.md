@@ -147,8 +147,9 @@ GHandle 采用业界常见的 generation handle 方言：字段顺序与宽度�
     计数化悬垂用例；死亡测试全部实跑：get 失配 abort、跨实例 try_get/get 的
     owner 拒绝、dangle 下溢 abort、remove 未归还借用 abort、分配溢出 abort、
     reset 0xDD 毒化）；跑毕已切回默认 release 配置；
-  - ASan（`xmake f --with_tests=y --with_asan=y`，全局插桩）：43 用例零报告
-    （linux/gcc、clang 路径；MSVC ASan 不做泄漏检测）。
+  - ASan（`xmake f --with_tests=y --with_asan=y`）：43 用例零报告
+    （linux/gcc、clang 路径；当时开关只作用于 unittest 目标，库源码未插桩，
+    2026-10-21 已移到根作用域；MSVC 上该开关不生效）。
 - 2026-10-11（质量审查）：注释/文档与实现对齐（createArray 值初始化语义、
   `owns()` 使用口径、悬空文档引用）+ 测试补缺（`GenerationalArena::owns`、
   createArray 值初始化 pin、`TypedArena::createArray`）+ ensureSlots 槽位 u32

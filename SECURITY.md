@@ -1,29 +1,34 @@
 # Security Policy
 
-## Supported Versions
+## 支持的版本
 
-Only the latest tagged release receives security fixes.
+最新发布版本接收安全修复；更早版本按 issue 单独评估。
 
-## Reporting a Vulnerability
+## 报告漏洞
 
-Please report security issues privately rather than opening a public issue.
+请走私密渠道，不要开公开 issue：使用本仓库 GitHub 的 **Security → Report a vulnerability**，或直接联系维护者。
 
-Use GitHub's private vulnerability reporting for this repository
-(**Security → Report a vulnerability**), or contact the maintainer directly.
+报告请包含：
 
-Please include:
+- 受影响版本（commit 或发布版本）
+- 平台与工具链（如 Windows/MSVC 2022、xmake 版本）
+- 可复现的最小用例
+- 观察到的后果（崩溃、内存破坏、越界读写、无界内存增长、死循环）
 
-- affected version (tag or commit)
-- platform and toolchain (e.g. Windows/MSVC 2022, xmake version)
-- a minimal reproducer if possible
-- the impact you observed (crash, memory corruption, unbounded allocation, infinite loop, out-of-bounds read/write)
+## 范围
 
-## Scope
+libgarena 不解析外部输入；安全面是内存管理原语本身。以下属于受理范围：
 
-This library parses untrusted binary input (`.class` files, archives). Reports
-about malformed-input handling — out-of-bounds access, unbounded memory growth,
-or unbounded loops triggered by hostile input — are in scope.
+- 失效或跨实例句柄绕过 gen/owner 校验，取到已删除对象或错误对象；
+- 分配尺寸、槽位下标的整数溢出导致越界读写；
+- 分配失败路径未按契约 abort，而是返回空指针或抛出异常，导致调用方空解引用；
+- 借用登记表、块链表、空闲链自身的越界或 use-after-free。
 
-Reports limited to the documented analysis boundaries (see `doc/safety.md`)
-are not vulnerabilities; those boundaries are stated precisely and are
-intentional design decisions.
+以下不属于漏洞，是文档化的设计边界：
+
+- 误用导致的悬垂：`Arena::reset()`/析构后继续使用旧 `T*`、池析构后使用 `GHandle`、句柄跨池传递（release 下校验失败返回 nullptr/false 是契约的一部分）；
+- 仅 debug 生效的检查（`GARENA_MARK_BORROWED` 借用断言、reset 后 0xDD 毒化）在 release 不存在；release 的确定性检查只有 gen 句柄校验；
+- 单线程模型下的数据竞争与跨线程共享；
+- 调用方违反头文件写明的约束（例如在 T 构造函数中重入本池的 `clear()`）。
+
+对边界有疑问时仍然欢迎报告，请在复现步骤中写明具体路径。

@@ -69,10 +69,10 @@ static_assert(std::is_trivially_copyable_v<GHandle>, "GHandle must be trivially 
 ///  4. clear()：全部活槽置死并 gen+1（保留存储）。与 Arena::reset 的关键差异：
 ///     clear 后旧句柄必然校验失败，而 reset 后旧指针不可检。clear 不复用 gen 值。
 ///  5. 异常安全：create 中 T 构造抛出 → 槽置死、gen+1、重入空闲链后重抛，
-///     不发布半构造对象。（约束：T 的构造函数不得重入本池的 create/remove/
-///     reserve——实现持有跨构造期存活的 SlotMeta 引用，重入触发 ensureSlots
-///     的 slots_ 重分配会使该引用悬垂；与 Layer A createArray 的"构造函数
-///     不得再向本 arena 分配"同类约束。）
+///     不发布半构造对象。构造期间槽已出空闲链但尚未发布；T 的构造函数不得
+///     重入本池的 clear() 或移动/销毁本池——正在构造的槽会被一并清空或存储
+///     被释放。重入 create/reserve 受支持（create 在构造后重新获取槽元数据，
+///     不持有跨构造期的引用）。
 ///  6. 非线程安全：单线程顺序模型，与 garena::Arena 一致。
 ///  7. move 语义：move-only；移动转移块与元数据所有权，owner 不变（目的实例
 ///     维持原代号）；被移动壳 owner 归零（== kNoHandle.owner，旧句柄必失配）。
@@ -104,19 +104,23 @@ public:
     template <class... A>
     Handle create(A&&... args);
 
-    /// 校验取值。失配（owner/slot 越界/gen 不等/槽已死）→ nullptr，全构建生效。
+    /// 校验取值。slot/gen 失配（越界、gen 不等、槽已死）→ nullptr，全构建生效；
+    /// owner 失配（跨实例）→ release nullptr、debug abort（契约 3）。
     T*       try_get(Handle h) noexcept;
     const T* try_get(Handle h) const noexcept;
 
-    /// 校验取值。失配 → std::abort（消息含期望/实际 owner-slot-gen），全构建生效。
+    /// 校验取值。任一失配 → std::abort（消息含期望/实际状态），全构建生效；
+    /// kNoHandle 同样 abort（空句柄不对应任何活对象）。
     T&       get(Handle h);
     const T& get(Handle h) const;
 
-    /// 句柄当前是否指向活元素（全构建校验）。kNoHandle 恒 false。
+    /// 句柄当前是否指向活元素。slot/gen 失配返回 false；owner 失配 release
+    /// 返回 false、debug abort（契约 3）。kNoHandle 恒 false。
     bool     alive(Handle h) const noexcept;
 
-    /// O(1) 删除：校验失败返回 false（预期失败路径，不 abort）；
-    /// 成功：析构 T、gen+1、槽入空闲链、live_count-1，返回 true。
+    /// O(1) 删除。slot/gen 失配返回 false（预期失败路径）；owner 失配 release
+    /// 返回 false、debug abort（契约 3）。成功：析构 T、gen+1、槽入空闲链、
+    /// live_count-1，返回 true。
     /// debug 下：该槽存储范围内若有 GARENA_MARK_BORROWED 未归还 → abort
     /// （与 Arena::reset 同规）。
     bool     remove(Handle h);
@@ -161,7 +165,7 @@ private:
     /// 内部校验：合法指向活元素返回非空；否则 nullptr。
     T*       validate(Handle h) noexcept;
     const T* validate(Handle h) const noexcept;
-    /// 校验失败时打印期望/实际状态并 abort（get 与 remove 内部借用断言共用）。
+    /// 校验失败时打印期望/实际状态并 abort（get 的失败路径）。
     [[noreturn]] void abortMismatch(Handle h) const;
     /// 扩容到至少 n 槽：追加块 + 元数据 + 空闲链。系统分配失败 abort（契约 8）。
     void      ensureSlots(ca::usize n);
@@ -279,7 +283,13 @@ template <class T>
 void GenerationalArena<T>::abortMismatch(Handle h) const {
     // 消息为 ASCII：死亡测试的 stderr 正则依赖它（跨代码页稳定）。
     // I/O 一律走 dangle_abort（I/O 收敛在 dangle_check.cpp，规避上游 #undef stderr）。
-    if (h.owner != owner_) {
+    if (h.slot == kInvalidSlot) {
+        ///< kNoHandle 的 owner=0 只是字段默认值，不是跨实例使用：先于 owner
+        ///< 分支报告，避免 get(kNoHandle) 被误报成 owner mismatch。
+        detail::dangle_abort(
+            "garena: handle rejected - null handle: handle(owner=%u slot=0xFFFFFFFF gen=%u)\n",
+            h.owner, h.gen);
+    } else if (h.owner != owner_) {
         detail::dangle_abort(
             "garena: handle rejected - owner mismatch: handle(owner=%u slot=%u gen=%u) "
             "vs pool(owner=%u)\n",
@@ -356,19 +366,21 @@ template <class... A>
 auto GenerationalArena<T>::create(A&&... args) -> Handle {
     if (free_head_ == kInvalidSlot) ensureSlots(slots_.size() + 1);
     const ca::u32 slot = free_head_;
-    SlotMeta& m = metaAt(slot);
-    free_head_ = m.next_free;
+    free_head_ = metaAt(slot).next_free;
     T* p = slotPtr(slot);
     try {
         new (static_cast<void*>(p)) T(std::forward<A>(args)...);
     } catch (...) {
-        ///< 契约 5：不发布半构造对象；gen+1 防异常期被捕获的旧句柄复活
+        ///< 契约 5：不发布半构造对象；gen+1 防异常期被捕获的旧句柄复活。
+        ///< 构造期间槽元数据可能被重入的 create/reserve 扩容搬动，重新取引用。
+        SlotMeta& m = metaAt(slot);
         m.gen++;
         m.alive = false;
         m.next_free = free_head_;
         free_head_ = slot;
         throw;
     }
+    SlotMeta& m = metaAt(slot);
     m.alive = true;
     ++live_count_;
     return Handle{owner_, slot, m.gen};
@@ -428,12 +440,12 @@ bool GenerationalArena<T>::remove(Handle h) {
 template <class T>
 void GenerationalArena<T>::destroyAllAlive() noexcept {
 #ifndef NDEBUG
-    if (live_count_ != 0) {
-        DangleCheck::instance().assertNoneOwnedBy(
-            [this](const void* q) { return owns(q); });
-    }
+    ///< 不按 live_count_ 短路：已 remove 的槽仍可能有登记在案的借用，
+    ///< 析构是清理这些登记的最后机会
+    DangleCheck::instance().assertNoneOwnedBy(
+        [this](const void* q) { return owns(q); });
 #endif
-    ///< 槽序逆序析构（与 Arena::reset 同向：后建先毁）
+    ///< 槽序逆序析构；槽位复用后与构造序无关（与 Arena::reset 同为逆序执行）
     for (ca::u32 s = static_cast<ca::u32>(slots_.size()); s > 0; --s) {
         SlotMeta& m = slots_[s - 1];
         if (m.alive) slotPtr(s - 1)->~T();

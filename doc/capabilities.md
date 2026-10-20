@@ -33,7 +33,7 @@ nullptr（空请求无地址语义）。**全部设施非线程安全**（单线
 | `T* try_get(Handle)` / `const T*` | 全构建校验；slot/gen 失配 → nullptr；owner 失配 → release nullptr / **debug abort** |
 | `T& get(Handle)` / `const T&` | 同校验；失配 → **abort**（打印期望/实际 owner-slot-gen），release 也启用 |
 | `bool alive(Handle)` | 句柄当前是否指向活元素（全构建校验；kNoHandle 恒 false） |
-| `bool remove(Handle)` | O(1) 删除：析构 T、gen+1、槽入空闲链；校验失败返回 false；debug 下槽内有未归还借用 → abort |
+| `bool remove(Handle)` | O(1) 删除：析构 T、gen+1、槽入空闲链；slot/gen 失配返回 false，owner 失配 release false / **debug abort**；debug 下槽内有未归还借用 → abort |
 | `void clear()` | 全部活槽置死并 gen+1，空闲链重置为全槽，保留存储；旧句柄此后必然失配 |
 | `usize size()` / `usize capacity()` | 活元素数 / 总槽位（含死槽） |
 | `void reserve(usize n)` | 预扩槽位与块（只扩不缩） |

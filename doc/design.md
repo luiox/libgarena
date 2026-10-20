@@ -1,6 +1,6 @@
 # libgarena 设计
 
-> 本文自足成文：双层架构契约、冻结 API 与缺陷闭环记录（#1–#12）均在本仓
+> 本文自足成文：双层架构契约、冻结 API 与缺陷闭环记录（#1–#11）均在本仓
 > doc/ 内，不依赖外部治理文档。
 
 ## 动机与定位
@@ -112,11 +112,14 @@ v2 计数化（缺陷#3）：登记表为 指针 → 借用计数 的 map（v0.1
    后旧句柄**必然**校验失败，而 reset 后旧指针不可检。
 6. **异常安全**：create 中 T 构造抛出 → 槽置死、gen+1、重入空闲链后重抛，不发布
    半构造对象。系统级分配失败（块/元数据 malloc）与 Layer A 同约：abort，不抛
-   bad_alloc——create 的唯一异常源是 T 的构造函数。
+   bad_alloc——create 的唯一异常源是 T 的构造函数。构造期间槽已出空闲链但未发布；
+   T 的构造函数不得重入本池的 `clear()` 或移动/销毁本池（正在构造的槽会被一并
+   清空或存储被释放），重入 create/reserve 受支持。
 7. **move**：move-only；移动转移块与元数据，owner 不变；被移动壳 owner 归零。
 8. **与 dangle_check 的关系**：Layer B 是「裸指针借出后对象死亡」的类型层解；仍以
-   `T*` 短暂借出的场景沿用登记宏，`remove()`/析构 对该槽存储范围做未归还断言
-   （debug，与 Arena::reset 同规）。
+   `T*` 短暂借出的场景沿用登记宏。`remove()` 对该槽存储范围、析构对整池块存储范围
+   做未归还借用断言（debug，与 Arena::reset 同规）；析构不按活对象数短路——已
+   remove 的槽仍可能有残留借用。
 
 ## 句柄方言
 
@@ -129,13 +132,12 @@ GHandle 采用业界常见的 generation handle 方言：字段顺序与宽度�
 | 设施 | 关系 |
 |---|---|
 | `ca::str::Utf8StringArena` | 字符串专用（intern 去重），继续直用；本库不做字符串 |
-| `ca::str::Utf8StringPool` | 无共同死亡点时的选择（引用计数），互斥选型；**保留 libca 侧设施、不在本库推广**（当前 0 采用） |
-| 引用计数池（`ca::str::Utf8StringPool`） | 无共同死亡点时的互斥选型；本库不提供，需要时直用 libca |
+| `ca::str::Utf8StringPool` | 无共同死亡点时的互斥选型（引用计数）；保留 libca 侧设施、不在本库推广，需要时直用 libca |
 
 ## 版本注记
 
 - v0.1：Arena + TypedArena + dangle_check（17 测试）。
-- v2（2026-09-09，本文）：Layer A 缺陷闭环（#1–#12）+ Layer B
+- v2（2026-09-09，本文）：Layer A 缺陷闭环（#1–#11）+ Layer B
   GenerationalArena/GHandle 新增。public 头不再注入 `using ca::usize`（缺陷#10，
   未保留过渡别名，调用方显式写 `ca::usize`）；悬空文档引用修正（缺陷#11）。
 
@@ -165,3 +167,11 @@ GHandle 采用业界常见的 generation handle 方言：字段顺序与宽度�
   `#ifdef _WIN32` 仅切换死亡判定（MSVC 退出码 3 / POSIX SIGABRT），不移除
   测试。CI（ci.yml）按默认 release 口径跑双平台，debug 为 README 约定的
   发布前人工步骤。
+- 2026-10-21（Layer B 契约对齐）：create 在构造后重新获取槽元数据（构造期
+  重入 reserve/create 不再留下悬垂引用）、析构的借用断言不再按 live_count_
+  短路、get(kNoHandle) 报 null handle、成员注释与契约 3 的 owner 失配分级
+  对齐——windows/MSVC 实跑：release 49 用例、debug 52 用例全绿。新增 3 条
+  用例在旧代码上均先失败：get(kNoHandle) 误报 owner mismatch、构造期 reserve
+  后外层句柄指向死槽、已 remove 槽的残留借用未被析构检出。文档修正：#1–#12
+  改为 #1–#11（实际只记录 #1–#11）、合并重复的 Utf8StringPool 表格行、移除
+  未定义的 DEV-15 标注。

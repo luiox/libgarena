@@ -109,6 +109,6 @@ xmake run libgarena_unittest
 
 - [doc/design.md](doc/design.md) —— 设计契约与取舍：所有权治理三原则、双层架构
   硬契约全文、句柄方言细节、libjbytecode 六套所有权制度的根因分析、缺陷闭环记录
-  （#1–#12）与验证记录。README 未展开的深层内容以它为准。
+  （#1–#11）与验证记录。README 未展开的深层内容以它为准。
 - [doc/capabilities.md](doc/capabilities.md) —— API 一览（签名级逐条说明）。
 - 头文件 Doxygen 注释是 API 使用方式的唯一事实来源。

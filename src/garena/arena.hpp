@@ -106,7 +106,7 @@ public:
     /// 指针是否落在本 arena 的某个 chunk 内（含已分配与未使用的 chunk 空间）。
     /// 归属判别/诊断口径；范围判定，不追踪逐块 allocated 边界。
     /// v2 起内部为基址有序二分 + 最近命中缓存（缺陷#8），单次 O(log chunks)、
-    /// 缓存命中 O(1)。口径（DEV-15）：诊断断言与「迁移期混合清除」的节点归属
+    /// 缓存命中 O(1)。口径：诊断断言与「迁移期混合清除」的节点归属
     /// 判别（如 libjbytecode InsnList::disposeNode，release 也生效）是合法消费方；
     /// 不得进入 alloc/create 这类逐元素分配热路径。
     bool owns(const void* p) const noexcept;

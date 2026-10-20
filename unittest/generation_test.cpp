@@ -49,6 +49,18 @@ void reset_throwing(int throw_at) {
     ThrowingCtor::live = 0;
 }
 
+/// 构造期重入 reserve：钉住 create 在构造后重新获取槽元数据。
+/// 1 槽池在第 1 个对象构造时扩容到 2 槽，强制 slots_ 重分配。
+struct ReentrantReserve {
+    GenerationalArena<ReentrantReserve>* pool;
+    int                                  v;
+    ReentrantReserve(GenerationalArena<ReentrantReserve>* p, int x);
+};
+
+ReentrantReserve::ReentrantReserve(GenerationalArena<ReentrantReserve>* p, int x) : pool(p), v(x) {
+    if (v == 1) pool->reserve(2);
+}
+
 }  // namespace
 
 // ---------------------------------------------------------------------------
@@ -136,6 +148,14 @@ TEST(GenerationTest, GetAfterRemoveAborts) {
     GHandle h = pool.create(1);
     pool.remove(h);
     ASSERT_EXIT({ pool.get(h); }, kAborted, "garena: handle rejected.*stale");
+}
+
+TEST(GenerationTest, GetNoHandleReportsNullHandle) {
+    ///< kNoHandle 的 owner=0 是字段默认值而非跨实例句柄：消息必须是 null handle，
+    ///< 不能落进 owner mismatch 分支误导排障。
+    GenerationalArena<Item> pool;
+    ASSERT_EXIT({ (void)pool.get(kNoHandle); }, kAborted,
+                "garena: handle rejected.*null handle");
 }
 
 // ---------------------------------------------------------------------------
@@ -285,6 +305,16 @@ TEST(GenerationTest, CreateExceptionOnFreshSlotKeepsPoolUsable) {
     EXPECT_EQ(pool.get(h).v, 7);
 }
 
+TEST(GenerationTest, CreateRefetchesMetaAfterReentrantReserve) {
+    ///< 构造期 reserve 重分配 slots_：create 若沿用构造前的 SlotMeta 引用，
+    ///< 发布写入会落在已释放的旧存储上，返回的句柄指向死槽。
+    GenerationalArena<ReentrantReserve> pool(1);
+    GHandle h = pool.create(&pool, 1);
+    ASSERT_TRUE(pool.alive(h));
+    EXPECT_EQ(pool.get(h).v, 1);
+    EXPECT_EQ(pool.size(), 1u);
+}
+
 // ---------------------------------------------------------------------------
 // for_each / reserve
 // ---------------------------------------------------------------------------
@@ -361,6 +391,24 @@ TEST(GenerationTest, RemoveWithOutstandingBorrowAborts) {
             GHandle h = pool.create(1);
             GARENA_MARK_BORROWED(pool.try_get(h));
             pool.remove(h);  ///< 该槽存储范围内有未归还借用 → abort
+        },
+        kAborted, "dangle");
+#else
+    GTEST_SUCCEED() << "release build: borrow check is no-op";
+#endif
+}
+
+TEST(GenerationTest, DestructorRejectsBorrowOnRemovedSlot) {
+#ifndef NDEBUG
+    ///< 借用登记晚于 remove：析构时 live_count_ 已是 0，但指针仍落在池存储内。
+    ///< 析构断言不得按活对象数短路，否则这条借用随池销毁被静默遗忘。
+    ASSERT_EXIT(
+        {
+            GenerationalArena<Item> pool;
+            GHandle h = pool.create(1);
+            Item* p = pool.try_get(h);
+            pool.remove(h);
+            GARENA_MARK_BORROWED(p);
         },
         kAborted, "dangle");
 #else

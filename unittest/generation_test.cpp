@@ -415,3 +415,21 @@ TEST(GenerationTest, DestructorRejectsBorrowOnRemovedSlot) {
     GTEST_SUCCEED() << "release build: borrow check is no-op";
 #endif
 }
+
+///< 活槽借用的析构路径（与上一条互补）：对象仍存活时析构池，
+///< destroyAllAlive 的借用断言同样必须拦下未归还借用。
+TEST(GenerationTest, DestructorWithOutstandingBorrowOnAliveSlotAborts) {
+#ifndef NDEBUG
+    ASSERT_EXIT(
+        {
+            {
+                GenerationalArena<Item> pool;
+                GHandle h = pool.create(1);
+                GARENA_MARK_BORROWED(pool.try_get(h));
+            }  ///< ~GenerationalArena → destroyAllAlive：块内有未归还借用 → abort
+        },
+        kAborted, "dangle");
+#else
+    GTEST_SUCCEED() << "release build: borrow check is no-op";
+#endif
+}

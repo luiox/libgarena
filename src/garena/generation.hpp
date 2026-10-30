@@ -32,7 +32,8 @@ inline constexpr ca::u32 kInvalidSlot = 0xFFFFFFFFu;
 /// - slot：槽位下标；gen：该槽位代数。remove 与 clear 均使 gen+1，旧句柄立即
 ///   失效，不存在 ABA。
 /// - gen 回绕：u32 需单槽 2^32 次删除，实践不可达；回绕不作特殊处理（记录在案
-///   的接受界）。
+///   的接受界）。owner 代号源 next_owner_id() 同为 u32 自增，回绕同样不处理
+///   （2^32 次池实例化实践不可达，同族接受界）。
 struct GHandle {
     ca::u32 owner = 0;
     ca::u32 slot  = kInvalidSlot;
@@ -125,8 +126,9 @@ public:
     /// （与 Arena::reset 同规）。
     bool     remove(Handle h);
 
-    /// 全部置死：析构全部活元素（槽序逆序，与 Arena::reset 同向）、每个槽
-    /// gen+1、空闲链重置为全槽。保留存储。O(n)。
+    /// 全部置死：析构全部活元素、每个槽 gen+1、空闲链重置为全槽。保留存储。
+    /// O(n)。析构序为槽序降序（slot 下标从高到低）——**非创建序**：槽复用后
+    /// 两者不同，不提供"后建先毁"保证（析构函数不得依赖同池其他元素的存亡序）。
     void     clear() noexcept;
 
     ca::usize size() const noexcept;      ///< 活元素数

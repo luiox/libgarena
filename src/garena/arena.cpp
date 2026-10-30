@@ -46,6 +46,7 @@ Arena& Arena::operator=(Arena&& other) noexcept {
         sorted_ = other.sorted_;
         chunk_count_ = other.chunk_count_;
         chunk_capacity_ = other.chunk_capacity_;
+        bump_chunk_ = other.bump_chunk_;
         last_hit_ = other.last_hit_;
         first_chunk_bytes_ = other.first_chunk_bytes_;
         next_chunk_bytes_ = other.next_chunk_bytes_;
@@ -56,22 +57,29 @@ Arena& Arena::operator=(Arena&& other) noexcept {
         other.sorted_ = nullptr;
         other.chunk_count_ = 0;
         other.chunk_capacity_ = 0;
+        other.bump_chunk_ = 0;
         other.last_hit_ = kNoChunkIndex;
         other.next_chunk_bytes_ = 0;
         other.dtors_ = nullptr;
         other.dtor_count_ = 0;
         other.dtor_capacity_ = 0;
+        // other.first_chunk_bytes_ 有意保留：旧壳按原首块尺寸当全新 arena 重启
     }
     return *this;
 }
 
 void* Arena::alloc(ca::usize bytes, ca::usize align) {
     if (align == 0) align = 1;
+    if (bytes > kMaxAlloc || align > kMaxAlloc) abortSizeOverflow();  ///< 缺陷#1；先于空请求判定——align 非法即使 bytes==0 也 abort（缺陷#14）
     if (bytes == 0) return nullptr;  ///< 契约 6：空请求无地址语义（缺陷#2 改约）
-    if (bytes > kMaxAlloc || align > kMaxAlloc) abortSizeOverflow();  ///< 缺陷#1
-    if (ca::u8* p = allocInChunk(bytes, align)) return p;
+    ///< 沿游标向后找（缺陷#12）：本块放不下则前移，剩余空间本周期搁浅；
+    ///< 既有块全满才 growChunk。游标单调推进（rollback 除外），摊销 O(1)。
+    while (bump_chunk_ < chunk_count_) {
+        if (ca::u8* p = allocInChunk(bump_chunk_, bytes, align)) return p;
+        ++bump_chunk_;
+    }
     growChunk(checkedAdd(bytes, align));
-    ca::u8* p = allocInChunk(bytes, align);
+    ca::u8* p = allocInChunk(bump_chunk_, bytes, align);
     if (!p) {  ///< 契约 6：growChunk 成功后必有空间，走不到即内部错误
         std::fprintf(stderr, "garena: internal error (bump failed after grow)\n");
         std::abort();
@@ -79,9 +87,8 @@ void* Arena::alloc(ca::usize bytes, ca::usize align) {
     return p;
 }
 
-ca::u8* Arena::allocInChunk(ca::usize bytes, ca::usize align) {
-    if (chunk_count_ == 0) return nullptr;
-    Chunk& c = chunks_[chunk_count_ - 1];
+ca::u8* Arena::allocInChunk(ca::usize idx, ca::usize bytes, ca::usize align) {
+    Chunk& c = chunks_[idx];
     ca::usize start = alignUp(reinterpret_cast<ca::usize>(c.data + c.used), align);
     ca::usize end = start + bytes;
     if (end < start || end > reinterpret_cast<ca::usize>(c.data + c.capacity)) return nullptr;
@@ -92,6 +99,10 @@ ca::u8* Arena::allocInChunk(ca::usize bytes, ca::usize align) {
 void Arena::growChunk(ca::usize min_bytes) {
     ca::usize want = next_chunk_bytes_ != 0 ? next_chunk_bytes_ : first_chunk_bytes_;
     if (want < min_bytes) want = min_bytes;
+    ///< 缺陷#14：bytes+align 可达 ~SIZE_MAX（各自 ≤ kMaxAlloc 但和超出），先判
+    ///< 后对齐——alignUp(want,16) 对近 SIZE_MAX 的 want 会回绕出 0，旧实现
+    ///< 以 internal error / OOM(0 bytes) 消息误报，此处给出溢出的确定性口径
+    if (want > kMaxAlloc) abortSizeOverflow();
     want = alignUp(want, 16);
 
     if (chunk_count_ == chunk_capacity_) {
@@ -124,6 +135,7 @@ void Arena::growChunk(ca::usize min_bytes) {
     }
     sorted_[pos] = chunk_count_;
     ++chunk_count_;
+    bump_chunk_ = chunk_count_ - 1;  ///< 新块即当前 bump 块
     last_hit_ = kNoChunkIndex;
     next_chunk_bytes_ = want * 2;  ///< 后续 chunk 容量翻倍，摊薄大场景
 }
@@ -191,17 +203,21 @@ void Arena::registerArrayDestructor(void* obj, ca::usize count, ca::usize elem_s
     dtors_[dtor_count_++] = DtorEntry{obj, destroy, count, elem_size};
 }
 
-ca::usize Arena::lastChunkUsed() const noexcept {
-    return chunk_count_ != 0 ? chunks_[chunk_count_ - 1].used : 0;
+Arena::BumpMark Arena::markBump() const noexcept {
+    if (bump_chunk_ < chunk_count_) return BumpMark{bump_chunk_, chunks_[bump_chunk_].used};
+    return BumpMark{chunk_count_, 0};  ///< 游标耗尽（既有块全满）：下一分配必然 growChunk
 }
 
-void Arena::rollbackBump(ca::usize pre_chunk_count, ca::usize pre_used) noexcept {
-    if (chunk_count_ == 0) return;
-    if (chunk_count_ > pre_chunk_count) {
-        chunks_[chunk_count_ - 1].used = 0;  ///< 快照后新开的块：整块闲置
-    } else {
-        chunks_[chunk_count_ - 1].used = pre_used;
+void Arena::rollbackBump(BumpMark mark) noexcept {
+    if (bump_chunk_ < chunk_count_) {
+        if (bump_chunk_ == mark.chunk) {
+            chunks_[bump_chunk_].used = mark.used;  ///< 同块：恢复快照 used（含对齐 padding）
+        } else {
+            ///< 快照后切入/新开的块：分配前 used==0（游标不变式），整块闲置供复用
+            chunks_[bump_chunk_].used = 0;
+        }
     }
+    bump_chunk_ = mark.chunk;
 }
 
 void Arena::reset() noexcept {
@@ -218,6 +234,7 @@ void Arena::reset() noexcept {
     }
 #endif
     for (ca::usize i = 0; i < chunk_count_; ++i) chunks_[i].used = 0;
+    bump_chunk_ = 0;       ///< 缺陷#12：游标回首块，从首块重新 bump——跨 reset 周期内存有界
     next_chunk_bytes_ = 0;  ///< 复用已有 chunk，容量策略从头开始
 }
 
@@ -238,6 +255,7 @@ void Arena::freeChunks() noexcept {
     sorted_ = nullptr;
     chunk_count_ = 0;
     chunk_capacity_ = 0;
+    bump_chunk_ = 0;
     last_hit_ = kNoChunkIndex;
     std::free(dtors_);
     dtors_ = nullptr;

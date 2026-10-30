@@ -130,6 +130,22 @@ TEST(ArenaTest, ResetReusesChunkMemory) {
     EXPECT_EQ(p, q);                    // bump 从头开始
 }
 
+/// 缺陷#12：多 chunk 下 reset 必须从首块重新 bump（此前只从末块恢复，
+/// 前面块跨周期搁浅、同等负载反复追加新 chunk，总量无界增长）。
+TEST(ArenaTest, ResetRestartsBumpAtFirstChunkInMultiChunkArena) {
+    garena::Arena a(256);
+    void* first = a.alloc(64, 16);
+    for (int i = 0; i < 200; ++i) a.alloc(64, 16);  /// 跨多 chunk（256 起翻倍）
+    const usize total = a.total_bytes();
+    ASSERT_GT(total, 256u);
+
+    a.reset();
+    void* q = a.alloc(64, 16);
+    EXPECT_EQ(first, q);  /// bump 从首块重新开始（design.md「bump 从头开始」承诺）
+    for (int i = 0; i < 200; ++i) a.alloc(64, 16);  /// 与 reset 前完全同等的负载
+    EXPECT_EQ(a.total_bytes(), total);  /// 零新 chunk：跨 reset 周期内存有界
+}
+
 TEST(ArenaTest, MoveTransfersOwnership) {
     garena::Arena a(512);
     void* p = a.alloc(64, 8);
@@ -258,6 +274,29 @@ TEST(ArenaTest, CreateArrayRollsBackOnThrowingElement) {
     EXPECT_EQ(a.dtor_registrations(), 1);  /// 数组按一条登记
 }
 
+/// 缺陷#13：create 单对象构造抛出 → 回退 bump 后重抛（与 createArray 同规，
+/// 不把泄漏空间滞留到 reset）。
+TEST(ArenaTest, CreateRollsBackOnThrowingCtor) {
+    ThrowAtN::live = 0;
+    ThrowAtN::countdown = 0;  /// 首个构造即抛
+    garena::Arena a;
+    a.alloc(100, 1);  /// 前置占位：验证块内回退（恢复 100 而非清零）
+    const usize used_before = a.used_bytes();
+    try {
+        a.create<ThrowAtN>();
+        FAIL() << "expected throw";
+    } catch (const std::runtime_error&) {
+    }
+    EXPECT_EQ(a.used_bytes(), used_before);       /// bump 已回退到分配前
+    EXPECT_EQ(a.dtor_registrations(), 0);         /// 未登记析构
+    /// arena 可继续正常使用
+    ThrowAtN::countdown = 100;
+    ThrowAtN* obj = a.create<ThrowAtN>();
+    ASSERT_NE(obj, nullptr);
+    EXPECT_EQ(ThrowAtN::live, 1);
+    EXPECT_EQ(a.dtor_registrations(), 1);
+}
+
 /// 缺陷#7：析构登记开销披露。trivial 零元数据；non-trivial 每对象/每数组一条。
 TEST(ArenaTest, DtorRegistrationDiagnostics) {
     garena::Arena a;
@@ -295,7 +334,7 @@ TEST(ArenaTest, OwnsBinaryOverManyChunks) {
     EXPECT_FALSE(a.owns(&local));
 }
 
-/// 缺陷#1/#6：分配尺寸溢出一律 abort（契约 6，全构建生效）。
+/// 缺陷#1/#6/#14：分配尺寸溢出一律 abort（契约 6，全构建生效）。
 TEST(ArenaTest, SizeOverflowAborts) {
 #ifdef _WIN32
     const auto kAborted = ::testing::ExitedWithCode(3);
@@ -312,6 +351,21 @@ TEST(ArenaTest, SizeOverflowAborts) {
         {
             garena::Arena a;
             a.createArray<int>(garena::kMaxAlloc / sizeof(int) + 1);
+        },
+        kAborted, "garena: allocation size overflow");
+    /// 缺陷#14：bytes/align 各自 ≤ kMaxAlloc、但和近 SIZE_MAX——旧实现
+    /// alignUp 回绕出 want=0，以 internal error / OOM(0 bytes) 误报
+    ASSERT_EXIT(
+        {
+            garena::Arena a;
+            a.alloc(garena::kMaxAlloc, garena::kMaxAlloc);
+        },
+        kAborted, "garena: allocation size overflow");
+    /// 缺陷#14 收口：空请求不放行非法对齐（align 溢出即使 bytes==0 也 abort）
+    ASSERT_EXIT(
+        {
+            garena::Arena a;
+            a.alloc(0, garena::kMaxAlloc + 1);
         },
         kAborted, "garena: allocation size overflow");
 }

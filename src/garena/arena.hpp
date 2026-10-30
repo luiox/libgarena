@@ -10,7 +10,9 @@
 ///  6. 分配失败策略（v2 成文）：底层 malloc/realloc 失败或请求尺寸溢出
 ///     （> kMaxAlloc）一律 std::abort（带消息）。本库不抛异常、不返回空指针；
 ///     唯一例外：alloc(0, align) 返回 nullptr（空请求无地址语义——v2 起改约，
-///     v0.1 的"可用作哨兵"注释作废）。
+///     v0.1 的"可用作哨兵"注释作废）。例外只覆盖空请求本身：align > kMaxAlloc
+///     即使 bytes==0 也 abort（缺陷#14 收口：非法对齐只可能来自调用方尺寸
+///     计算错误，放行会掩盖它）。
 ///
 /// 选型判据见 doc/design.md：有共同死亡点 → Arena；
 /// 需要逐个增删、以稳定身份被引用 → GenerationalArena（generation.hpp）；
@@ -55,15 +57,25 @@ public:
     Arena& operator=(Arena&& other) noexcept;
 
     /// 按对齐分配 bytes 内存。返回地址终身稳定（直到 reset/析构）。
-    /// bytes == 0 返回 nullptr（空请求无地址语义，契约 6）；
+    /// bytes == 0 返回 nullptr（空请求无地址语义，契约 6；align 仍须合法）；
     /// bytes/align 溢出或系统分配失败 → std::abort，不返回空。
     void* alloc(ca::usize bytes, ca::usize align);
 
     /// bump 构造 T。non-trivial 析构在 reset()/析构 时逆序统一执行。
+    /// 异常安全（缺陷#13）：T 构造抛出时回退 bump 到分配前位置后重抛，
+    /// 与 createArray 同规（不把泄漏空间滞留到 reset）。
+    /// （约束：T 的构造函数不得再向本 arena 分配内存，否则回退会波及嵌套产物。）
     template <class T, class... A>
     T* create(A&&... args) {
+        const BumpMark mark = markBump();
         void* mem = alloc(sizeof(T), alignof(T));
-        T* obj = new (mem) T(std::forward<A>(args)...);
+        T* obj;
+        try {
+            obj = new (mem) T(std::forward<A>(args)...);
+        } catch (...) {
+            rollbackBump(mark);
+            throw;
+        }
         if constexpr (!std::is_trivially_destructible_v<T>) {
             registerDestructor(obj, sizeof(T), [](void* p) { static_cast<T*>(p)->~T(); });
         }
@@ -73,15 +85,14 @@ public:
     /// 构造 T 的数组（元素个数运行期决定，值初始化：标量元素零初始化）。
     /// non-trivial 析构同样被接管。
     /// count == 0 返回 nullptr。异常安全（缺陷#5）：第 k 个元素构造抛出时，
-    /// 逆序析构已构造的前 k-1 个、把 bump 指针回退到分配前位置后重抛——
+    /// 逆序析构已构造的前 k-1 个、把 bump 回退到分配前位置后重抛——
     /// 不泄漏半构造数组（含数组存储本身）。
     /// （约束：T 的构造函数不得再向本 arena 分配内存，否则回退会波及嵌套产物。）
     template <class T>
     T* createArray(ca::usize count) {
         if (count == 0) return nullptr;
         if (count > kMaxAlloc / sizeof(T)) abortSizeOverflow();
-        const ca::usize pre_chunk_count = chunk_count_;
-        const ca::usize pre_used = lastChunkUsed();
+        const BumpMark mark = markBump();
         void* mem = alloc(sizeof(T) * count, alignof(T));
         T* arr = static_cast<T*>(mem);
         ca::usize constructed = 0;
@@ -94,7 +105,7 @@ public:
                 --constructed;
                 (arr + constructed)->~T();
             }
-            rollbackBump(pre_chunk_count, pre_used);
+            rollbackBump(mark);
             throw;
         }
         if constexpr (!std::is_trivially_destructible_v<T>) {
@@ -124,7 +135,8 @@ public:
     /// non-trivial T 每对象（数组按数组）一条 DtorEntry，x64 上 ≈32B（缺陷#7）。
     ca::usize dtor_overhead_bytes() const noexcept;
 
-    /// 整批释放：逆序执行 non-trivial 析构 → 释放全部 chunk。
+    /// 整批释放：逆序执行 non-trivial 析构 → 全部 chunk 复位（used 清零、
+    /// bump 游标回首块；内存不归还 malloc，reset 后从首块重新 bump，缺陷#12）。
     /// 红线：此后所有旧指针失效；debug 下若仍有登记未归还的借用会断言失败。
     /// debug 下析构后对全部 chunk 空间填 0xDD 毒化（缺陷#4）：使"reset 后
     /// 继续用旧指针"大概率立即崩溃（raw 指针路线的检查边界：毒化只能提高
@@ -144,22 +156,31 @@ private:
         ca::usize elem_size;        ///< 单对象为 sizeof 元素
     };
 
+    /// bump 游标快照：{游标块下标, 该块 used}。alloc 可能推进游标（本块放不下
+    /// 前移）或新开块；游标不变式保证 > bump_chunk_ 的块恒有 used==0，
+    /// 回退据此恢复（见 rollbackBump）。
+    struct BumpMark {
+        ca::usize chunk;
+        ca::usize used;
+    };
+
     void registerDestructor(void* obj, ca::usize elem_size, void (*destroy)(void*));
     void registerArrayDestructor(void* obj, ca::usize count, ca::usize elem_size,
                                  void (*destroy)(void*));
-    ca::u8* allocInChunk(ca::usize bytes, ca::usize align);
+    ca::u8* allocInChunk(ca::usize idx, ca::usize bytes, ca::usize align);
     void growChunk(ca::usize min_bytes);
-    ca::usize lastChunkUsed() const noexcept;
-    /// 回退到 (pre_chunk_count, pre_used) 快照。alloc 快照后新开了 chunk →
-    /// 该块整块闲置（used=0，供后续复用）；否则恢复原 chunk 的 used。
-    void rollbackBump(ca::usize pre_chunk_count, ca::usize pre_used) noexcept;
+    BumpMark markBump() const noexcept;
+    /// 回退到 mark 快照：同块恢复原 used；快照后切入/新开的块整块闲置
+    /// （used=0，供后续复用）。游标恢复到 mark.chunk。
+    void rollbackBump(BumpMark mark) noexcept;
     void runDestructors() noexcept;
     void freeChunks() noexcept;
 
-    Chunk* chunks_ = nullptr;      ///< 动态数组（分配序，bump 用末尾块）
+    Chunk* chunks_ = nullptr;      ///< 动态数组（分配序；bump 沿游标前进，缺陷#12）
     ca::usize* sorted_ = nullptr;  ///< chunk 下标按基址升序（owns() 二分用，缺陷#8）
     ca::usize chunk_count_ = 0;
     ca::usize chunk_capacity_ = 0;
+    ca::usize bump_chunk_ = 0;     ///< 当前 bump 游标；其后所有块 used==0（不变式）
     mutable ca::usize last_hit_ = kNoChunkIndex;  ///< owns() 最近命中缓存
     ca::usize first_chunk_bytes_ = kDefaultFirstChunkBytes;
     ca::usize next_chunk_bytes_ = 0;

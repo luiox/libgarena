@@ -12,14 +12,14 @@ nullptr（空请求无地址语义）。**全部设施非线程安全**（单线
 |---|---|
 | `Arena()` / `Arena(usize first_chunk_bytes)` | 构造，默认首块 64KB |
 | `Arena(Arena&&)` / `operator=(Arena&&)` | move-only，chunk 所有权整体转移 |
-| `void* alloc(usize bytes, usize align)` | 对齐 bump 分配，地址终身稳定；`bytes==0` → nullptr；溢出 → abort |
-| `T* create<T>(args...)` | bump 构造单对象；non-trivial 析构由 arena 接管 |
+| `void* alloc(usize bytes, usize align)` | 对齐 bump 分配，地址终身稳定；`bytes==0` → nullptr（align 仍须 ≤ kMaxAlloc，否则 abort）；溢出 → abort |
+| `T* create<T>(args...)` | bump 构造单对象；non-trivial 析构由 arena 接管；构造抛出 → 回退 bump 后重抛 |
 | `T* createArray<T>(usize count)` | bump 构造值初始化数组（标量元素零初始化）；构造抛出 → 逆序析构+回退 bump 后重抛 |
 | `bool owns(const void* p)` | 指针是否落在本 arena chunk 内（基址有序二分+缓存；仅限低频诊断/归属判别路径，不入分配热路径） |
 | `usize used_bytes()` / `usize total_bytes()` | 已用 / chunk 总容量 |
 | `usize dtor_registrations()` | 当前 dtor 表条数（诊断） |
 | `usize dtor_overhead_bytes()` | dtor 表占用字节（披露：trivial 零元数据；non-trivial 每对象/每数组 ≈32B @x64） |
-| `void reset()` | 逆序析构 non-trivial 对象 + 复用 chunk；旧指针全失效；debug 下 0xDD 毒化 + 未归还借用断言 |
+| `void reset()` | 逆序析构 non-trivial 对象 + 复位全部 chunk（bump 游标回首块，从首块重新开始，不归还 malloc）；旧指针全失效；debug 下 0xDD 毒化 + 未归还借用断言 |
 | `inline constexpr usize kMaxAlloc` | 单次分配尺寸上限（SIZE_MAX/2），超过即溢出 abort |
 
 ## garena::GenerationalArena<T> + GHandle（src/garena/generation.hpp，Layer B）
@@ -34,7 +34,7 @@ nullptr（空请求无地址语义）。**全部设施非线程安全**（单线
 | `T& get(Handle)` / `const T&` | 同校验；失配 → **abort**（打印期望/实际 owner-slot-gen），release 也启用 |
 | `bool alive(Handle)` | 句柄当前是否指向活元素（全构建校验；kNoHandle 恒 false） |
 | `bool remove(Handle)` | O(1) 删除：析构 T、gen+1、槽入空闲链；slot/gen 失配返回 false，owner 失配 release false / **debug abort**；debug 下槽内有未归还借用 → abort |
-| `void clear()` | 全部活槽置死并 gen+1，空闲链重置为全槽，保留存储；旧句柄此后必然失配 |
+| `void clear()` | 全部活槽置死并 gen+1，空闲链重置为全槽，保留存储；旧句柄此后必然失配。析构序为槽序降序（slot 下标从高到低），非创建序——不提供「后建先毁」保证 |
 | `usize size()` / `usize capacity()` | 活元素数 / 总槽位（含死槽） |
 | `void reserve(usize n)` | 预扩槽位与块（只扩不缩） |
 | `void for_each(F)` / const | 遍历活元素（槽序）：`f(T&, GHandle)` |
@@ -49,7 +49,7 @@ nullptr（空请求无地址语义）。**全部设施非线程安全**（单线
 | `kNoHandle` | `{0, kInvalidSlot, 0}` 空句柄 |
 
 无 `operator[]`（防绕过校验）。move-only；move 后目的实例 owner 不变、被移动壳归零。
-gen 为 u32 不处理回绕（单槽 2^32 次删除实践不可达，记录在案的接受界）。
+gen 与 owner 代号均为 u32 不处理回绕（分别需单槽 2^32 次删除 / 2^32 次池实例化，实践不可达，记录在案的接受界）。
 
 ## garena::TypedArena<T>（src/garena/typed_arena.hpp，header-only）
 

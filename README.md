@@ -82,10 +82,10 @@ xmake run libgarena_unittest
 
 - **OOM**：malloc/realloc 失败或分配尺寸溢出（> `garena::kMaxAlloc` = SIZE_MAX/2）
   一律 `std::abort`（带消息），不抛异常、不返回空；唯一例外 `alloc(0)` /
-  `createArray(0)` 返回 nullptr。
-- **异常安全**：`createArray` / `GenerationalArena::create` 中 T 构造抛出 → 回滚
-  （逆序析构已构造元素 / 槽位 gen+1 重入空闲链）后重抛，不泄漏半构造对象；create
-  的唯一异常源是 T 的构造函数。
+  `createArray(0)` 返回 nullptr（空请求无地址语义；align 仍须合法，非法对齐 abort）。
+- **异常安全**：`Arena::create` / `createArray`、`GenerationalArena::create` 中
+  T 构造抛出 → 回滚（回退 bump / 槽位 gen+1 重入空闲链）后重抛，不泄漏半构造
+  对象；create 的唯一异常源是 T 的构造函数。
 - **句柄校验分级**：`try_get`/`alive` 全构建返回 nullptr/false（热路径可用）；
   `get` 失配确定性 abort（release 也启用）；跨实例使用句柄被结构性拒绝（debug
   一律 abort）；不提供 `operator[]`。
@@ -101,14 +101,14 @@ xmake run libgarena_unittest
 
 ## 状态与 License
 
-- 状态：v2，public API 已冻结（`GHandle` 12B 布局由 `static_assert` 钉死）；gen 的
-  u32 回绕为记录在案的接受界；CI 覆盖 Linux + Windows 双平台。
+- 状态：v2.1，public API 已冻结（`GHandle` 12B 布局由 `static_assert` 钉死）；gen 与
+  owner 的 u32 回绕为记录在案的接受界；CI 覆盖 Linux + Windows 双平台。
 - License：MIT（见 [LICENSE](LICENSE)）。
 
 ## 深入阅读
 
 - [doc/design.md](doc/design.md) —— 设计契约与取舍：所有权治理三原则、双层架构
   硬契约全文、句柄方言细节、libjbytecode 六套所有权制度的根因分析、缺陷闭环记录
-  （#1–#11）与验证记录。README 未展开的深层内容以它为准。
+  （#1–#14）与验证记录。README 未展开的深层内容以它为准。
 - [doc/capabilities.md](doc/capabilities.md) —— API 一览（签名级逐条说明）。
 - 头文件 Doxygen 注释是 API 使用方式的唯一事实来源。

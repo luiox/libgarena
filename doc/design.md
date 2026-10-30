@@ -1,6 +1,6 @@
 # libgarena 设计
 
-> 本文自足成文：双层架构契约、冻结 API 与缺陷闭环记录（#1–#11）均在本仓
+> 本文自足成文：双层架构契约、冻结 API 与缺陷闭环记录（#1–#14）均在本仓
 > doc/ 内，不依赖外部治理文档。
 
 ## 动机与定位
@@ -43,27 +43,35 @@ GenerationalArena；确需共享可变所有权 → 引用计数（`ca::str::Utf
 2. **无逐条释放**：单个对象没有 free/delete；non-trivial 析构由 arena 登记，reset()/析构
    时**逆序**统一执行（后构造先析构，与栈语义一致）。
 3. **reset 红线**：reset()/析构 后所有旧指针失效。reset 复用已有 chunk 内存（不归还
-   malloc），bump 从头开始——「reset 后旧指针恰好又被分配出去」是必须靠纪律不做的事，
-   debug 悬垂检查（见下）把这条纪律变成可执行断言。
+   malloc），bump 游标回首块、从首块重新开始（缺陷#12：此前多 chunk 下只从末块
+   恢复，前面块跨周期搁浅、同等负载反复追加新 chunk，总量无界增长）——「reset
+   后旧指针恰好又被分配出去」是必须靠纪律不做的事，debug 悬垂检查（见下）把
+   这条纪律变成可执行断言。
 4. **非线程安全**：单线程顺序模型，与 Utf8StringArena 一致（Layer B 同）。
 5. **move 语义**：chunk 所有权整体转移，旧 Arena 变空壳；地址稳定契约不破坏。
 6. **分配失败策略（v2 成文，缺陷#6）**：malloc/realloc 失败或请求尺寸溢出
    （> `kMaxAlloc` = SIZE_MAX/2）一律 `std::abort`（带消息）；不抛异常、不返回空
    指针。唯一例外：`alloc(0, align)` 返回 nullptr——**空请求无地址语义**（缺陷#2
-   改约，v0.1 的「可用作哨兵」注释作废；`createArray(0)` 同约）。
+   改约，v0.1 的「可用作哨兵」注释作废；`createArray(0)` 同约）。例外只覆盖空
+   请求本身：align > kMaxAlloc 即使 bytes==0 也 abort（缺陷#14 收口——非法对齐
+   只可能来自调用方尺寸计算错误，放行会掩盖它）。
 
 ### 分配策略与开销披露（缺陷#7）
 
-- chunk 链（动态数组持有），默认首块 64KB（对齐 Utf8StringArena）；放不下 → 新
-  chunk，容量翻倍（首块 → 2× → 4× …）；分配 = 对齐 bump，O(1)；
+- chunk 链（动态数组持有），默认首块 64KB（对齐 Utf8StringArena）；当前块放不下
+  → bump 游标移到下一既有块（放不下的块剩余空间本周期搁浅），既有块全满才新
+  chunk，容量翻倍（首块 → 2× → 4× …）；分配 = 对齐 bump，游标单调推进摊销
+  O(1)（缺陷#12）；
 - **trivial T：零 per-allocation 元数据**；
 - **non-trivial T：每对象（数组按数组）一条 DtorEntry 登记（x64 上 ≈32B）**，reset
   逆序执行——dtor 内可以安全访问同 arena 中**先于自己构造**的对象。诊断 API
   `dtor_registrations()` / `dtor_overhead_bytes()` 可观测；
-- `alloc()` 入口做尺寸溢出检查（缺陷#1），`growChunk` 用带进位加法，回绕即 abort；
-- `createArray` 构造循环包 rollback guard（缺陷#5）：第 k 个元素抛出时逆序析构前
-  k-1 个、回退 bump 指针后重抛，不泄漏半构造数组（约束：元素构造不得再向本 arena
-  分配内存，否则回退波及嵌套产物）；
+- `alloc()` 入口做尺寸溢出检查（缺陷#1），`growChunk` 用带进位加法、回绕即 abort，
+  且对齐放大前先判 want > kMaxAlloc（缺陷#14：bytes/align 各自合法但和近
+  SIZE_MAX 时 alignUp 会回绕出 0，旧实现以 internal error 误报）；
+- `create`/`createArray` 构造抛出均回退 bump（缺陷#5/#13）：createArray 第 k 个
+  元素抛出时逆序析构前 k-1 个；两者都把 bump 游标回退到分配前位置后重抛，不
+  泄漏半构造对象（约束：构造不得再向本 arena 分配内存，否则回退波及嵌套产物）；
 - debug 下 `reset()` 析构后对全部 chunk 填 `0xDD` 毒化（缺陷#4 的 raw 指针面）：使
   「reset 后继续用旧指针」大概率立即崩溃。**检查边界**：毒化只提高崩溃概率，不是
   确定性检查；确定性的「死而可检」在 Layer B（gen 句柄）；
@@ -96,7 +104,8 @@ v2 计数化（缺陷#3）：登记表为 指针 → 借用计数 的 map（v0.1
 1. **句柄**：`GHandle{owner: u32, slot: u32, gen: u32}`，12 字节 trivially copyable。
    `owner` 是实例进程级唯一代号（自增分配，从 1 起，0 留给 kNoHandle/被移动壳）；
    `remove`/`clear`/构造失败 均使 gen+1，旧句柄立即失效，**不存在 ABA**。gen u32
-   回绕需单槽 2^32 次删除，实践不可达，为记录在案的接受界。
+   回绕需单槽 2^32 次删除，实践不可达，为记录在案的接受界；owner 代号源同为
+   u32 自增，回绕同样不处理（2^32 次池实例化实践不可达，同族接受界）。
 2. **地址稳定**：T 存储在块链（每块 block_slots 个 T，默认 1024；块 malloc 后永不
    搬动/归还）；槽位元数据在旁路 vector，地址不对外（每槽 12B：gen/next_free/alive，
    x64 含填充；存储保留不归还，与 Layer A chunk 复用同哲学）。`T*` 在 remove(该槽)
@@ -108,8 +117,10 @@ v2 计数化（缺陷#3）：登记表为 指针 → 借用计数 的 map（v0.1
    **owner 失配（跨实例使用句柄）结构性拒绝**：debug 一律 abort（try_get/get/
    alive/remove 都是「使用」）；release 下 try_get/alive 返回 false/nullptr、
    get abort、remove 返回 false。
-5. **clear()**：全部置死 + 每槽 gen+1，保留存储。与 Layer A reset 的关键差异：clear
-   后旧句柄**必然**校验失败，而 reset 后旧指针不可检。
+5. **clear()**：全部置死 + 每槽 gen+1，保留存储。析构序为**槽序降序**（slot 下标
+   从高到低），非创建序——槽复用后两者不同，不提供「后建先毁」保证（析构函数
+   不得依赖同池其他元素的存亡序）。与 Layer A reset 的关键差异：clear 后旧句柄
+   **必然**校验失败，而 reset 后旧指针不可检。
 6. **异常安全**：create 中 T 构造抛出 → 槽置死、gen+1、重入空闲链后重抛，不发布
    半构造对象。系统级分配失败（块/元数据 malloc）与 Layer A 同约：abort，不抛
    bad_alloc——create 的唯一异常源是 T 的构造函数。构造期间槽已出空闲链但未发布；
@@ -140,6 +151,11 @@ GHandle 采用业界常见的 generation handle 方言：字段顺序与宽度�
 - v2（2026-09-09，本文）：Layer A 缺陷闭环（#1–#11）+ Layer B
   GenerationalArena/GHandle 新增。public 头不再注入 `using ca::usize`（缺陷#10，
   未保留过渡别名，调用方显式写 `ca::usize`）；悬空文档引用修正（缺陷#11）。
+- v2.1（2026-10-30，审查修缮）：缺陷#12–#14 闭环——多 chunk reset 游标回首块
+  （跨 reset 周期内存有界）；`Arena::create` 构造抛出回退 bump（与 createArray
+  对齐）；growChunk 对齐放大前先判溢出 + `alloc(0)` 不放行非法对齐（溢出诊断
+  口径统一）。文档对齐：reset 注释、clear() 析构序（槽序降序非创建序）、owner
+  回绕记录为接受界。
 
 ## 验证记录
 
@@ -176,3 +192,10 @@ GHandle 采用业界常见的 generation handle 方言：字段顺序与宽度�
   后外层句柄指向死槽、已 remove 槽的残留借用未被析构检出。文档修正：#1–#12
   改为 #1–#11（实际只记录 #1–#11）、合并重复的 Utf8StringPool 表格行、移除
   未定义的 DEV-15 标注。
+- 2026-10-30（审查修缮 #12–#14）：windows/MSVC 双构建实跑：release 55 用例、
+  debug 55 用例全绿（新增：多 chunk reset 从首块回归 + 跨周期零新 chunk、
+  Arena::create 构造抛出回退 bump、活槽借用下池析构 abort、growChunk
+  bytes+align 近 SIZE_MAX 的溢出消息、alloc(0) 非法对齐 abort）。行为复核：
+  多 chunk arena（首块 256B）reset 后首分配回到首块原址，同等负载
+  （201×64B，跨 6 chunk）反复 reset/refill 零新增 chunk（修复前每周期
+  膨胀 ~8KB、旧块永久搁浅）。

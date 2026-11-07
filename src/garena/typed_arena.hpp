@@ -1,3 +1,7 @@
+/// @defgroup typed_arena 类型化便捷层（header-only）
+///
+/// 绑定 Arena 的视图值语义便捷层，「产物寿命 = 池寿命」写进签名；见 doc:design-typed-arena。
+
 /// @file typed_arena.hpp
 /// TypedArena<T>：绑定 Arena 的类型化便捷层（header-only，零额外开销）。
 ///

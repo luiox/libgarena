@@ -1,3 +1,7 @@
+/// @defgroup arena 通用 bump Arena（Layer A）
+///
+/// 地址稳定、逆序析构、reset 复用 chunk 的单调分配器；硬契约见 doc:design-layer-a。
+
 /// @file arena.hpp
 /// 通用 bump/monotonic arena：chunk 链式分配，整批分配、整批释放。
 ///
@@ -14,7 +18,7 @@
 ///     即使 bytes==0 也 abort（缺陷#14 收口：非法对齐只可能来自调用方尺寸
 ///     计算错误，放行会掩盖它）。
 ///
-/// 选型判据见 doc/design.md：有共同死亡点 → Arena；
+/// 选型判据见 doc:design-motivation：有共同死亡点 → Arena；
 /// 需要逐个增删、以稳定身份被引用 → GenerationalArena（generation.hpp）；
 /// 确需共享可变所有权 → 引用计数，不要硬套本库。
 

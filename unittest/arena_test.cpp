@@ -141,7 +141,7 @@ TEST(ArenaTest, ResetRestartsBumpAtFirstChunkInMultiChunkArena) {
 
     a.reset();
     void* q = a.alloc(64, 16);
-    EXPECT_EQ(first, q);  /// bump 从首块重新开始（design.md「bump 从头开始」承诺）
+    EXPECT_EQ(first, q);  /// bump 从首块重新开始（doc:design-layer-a 的 reset 红线承诺）
     for (int i = 0; i < 200; ++i) a.alloc(64, 16);  /// 与 reset 前完全同等的负载
     EXPECT_EQ(a.total_bytes(), total);  /// 零新 chunk：跨 reset 周期内存有界
 }

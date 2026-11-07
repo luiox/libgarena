@@ -1,3 +1,7 @@
+/// @defgroup dangle_check debug 悬垂检查宏
+///
+/// 借用登记/归还的成对性断言，NDEBUG 下零开销；语义与局限见 doc:design-dangle-check。
+
 #pragma once
 
 #include <cstddef>
@@ -18,7 +22,7 @@
 /// 「归还多于借出」（下溢）同样是被检查对象，直接 abort。
 
 /// 诊断出口（定义在 dangle_check.cpp）。stderr 在 UCRT 仅为宏（无底层符号），
-/// 且可被上游头合法 #undef（subprocess.hpp 为暴露同名成员），任何 TU 的 include
+/// 且可被上游头合法 \#undef 掉（subprocess.hpp 为暴露同名成员），任何 TU 的 include
 /// 顺序都可能让它失效——故全部 I/O 收敛到唯一 .cpp（stdio 最先包含、不碰
 /// process 族头，stderr 宏必在）。打印后 abort，不返回。消息为 ASCII：死亡
 /// 测试的 stderr 正则依赖它（跨代码页稳定）。

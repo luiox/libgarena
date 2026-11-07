@@ -1,3 +1,7 @@
+/// @defgroup generation 生成式句柄池（Layer B）
+///
+/// GenerationalArena<T> + GHandle：O(1) 增删、地址稳定、gen 校验防 ABA/UAF；硬契约见 doc:design-layer-b。
+
 #pragma once
 
 #include <cstddef>
@@ -17,9 +21,9 @@
 /// 适用场景：需要逐个增删、以稳定身份被引用的长命对象（指令、基本块、Label、
 /// 缓存项）；有共同死亡点的临时物请用 Layer A 的 garena::Arena（arena.hpp）。
 ///
-/// API 冻结与语义基线：doc/design.md（Layer B 硬契约）与 doc/capabilities.md；
+/// API 冻结与语义基线：doc:design-layer-b 与 doc:capabilities；
 /// 句柄为 owner/slot/gen 三元组方言，与上层字节码 IR 的 InsnId 同构（字段顺序
-/// 与宽度一致），见 doc/design.md「句柄方言」。
+/// 与宽度一致），见 doc:design-handle-dialect。
 
 namespace garena {
 

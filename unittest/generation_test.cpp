@@ -224,7 +224,7 @@ TEST(GenerationTest, ForeignHandleRejectedByTryGet) {
 #ifdef NDEBUG
     EXPECT_EQ(b.try_get(h), nullptr);  ///< release：返回 nullptr
 #else
-    ///< debug：结构性拒绝 —— 使用跨实例句柄直接 abort（见 doc/design.md 校验分级）
+    ///< debug：结构性拒绝 —— 使用跨实例句柄直接 abort（见 doc:design-layer-b 校验分级）
     ASSERT_EXIT({ (void)b.try_get(h); }, kAborted, "garena: handle rejected.*owner mismatch");
 #endif
 }

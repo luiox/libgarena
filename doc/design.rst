@@ -81,7 +81,7 @@ v2 计数化（缺陷#3）：登记表为 指针 → 借用计数 的 map（v0.1
 1. **句柄**：``GHandle{owner: u32, slot: u32, gen: u32}``，12 字节 trivially copyable。``owner`` 是实例进程级唯一代号（自增分配，从 1 起，0 留给 kNoHandle/被移动壳）；``remove``/``clear``/构造失败 均使 gen+1，旧句柄立即失效，**不存在 ABA**。gen u32 回绕需单槽 2^32 次删除，实践不可达，为记录在案的接受界；owner 代号源同为 u32 自增，回绕同样不处理（2^32 次池实例化实践不可达，同族接受界）。
 2. **地址稳定**：T 存储在块链（每块 block_slots 个 T，默认 1024；块 malloc 后永不搬动/归还）；槽位元数据在旁路 vector，地址不对外（每槽 12B：gen/next_free/alive，x64 含填充；存储保留不归还，与 Layer A chunk 复用同哲学）。``T*`` 在 remove(该槽) 或池析构 前恒定——IR 节点互指的前提。
 3. **O(1) 增删**：create 走空闲链或追加；remove 校验后原地析构 T、gen+1、槽入空闲链。
-4. **校验分级**：``try_get``/``alive`` 全构建校验，slot/gen 失配返回 nullptr（预期失败路径）；``get`` 失配 **abort**\（打印期望/实际 owner-slot-gen，**release 也启用**），确定性失败优于 UB——use-after-free 在 release 即可检。**不提供 operator[]**。**owner 失配（跨实例使用句柄）结构性拒绝**：debug 一律 abort（try_get/get/alive/remove 都是「使用」）；release 下 try_get/alive 返回 false/nullptr、get abort、remove 返回 false。
+4. **校验分级**：``try_get``/``alive`` 全构建校验，slot/gen 失配分别返回 nullptr/false（预期失败路径）；``get`` 失配 **abort**\（打印期望/实际 owner-slot-gen，**release 也启用**），确定性失败优于 UB——use-after-free 在 release 即可检。**不提供 operator[]**。**owner 失配（跨实例使用句柄）结构性拒绝**：debug 一律 abort（try_get/get/alive/remove 都是「使用」）；release 下 try_get/alive 返回 false/nullptr、get abort、remove 返回 false。
 5. **clear()**：全部置死 + 每槽 gen+1，保留存储。析构序为**槽序降序**\（slot 下标从高到低），非创建序——槽复用后两者不同，不提供「后建先毁」保证（析构函数不得依赖同池其他元素的存亡序）。与 Layer A reset 的关键差异：clear 后旧句柄**必然**校验失败，而 reset 后旧指针不可检。
 6. **异常安全**：create 中 T 构造抛出 → 槽置死、gen+1、重入空闲链后重抛，不发布半构造对象。系统级分配失败（块/元数据 malloc）与 Layer A 同约：abort，不抛 bad_alloc——create 的唯一异常源是 T 的构造函数。构造期间槽已出空闲链但未发布；T 的构造函数不得重入本池的 ``clear()`` 或移动/销毁本池（正在构造的槽会被一并清空或存储被释放），重入 create/reserve 受支持。
 7. **move**：move-only；移动转移块与元数据，owner 不变；被移动壳 owner 归零。

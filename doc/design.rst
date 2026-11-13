@@ -10,12 +10,12 @@ libgarena 设计文档
 1. 动机与定位
 -------------
 
-libjbytecode 的混乱根因是**所有权从未被设计**：六套互不相同的后补制度（树节点手写析构循环 / Label 池 / InsnList 摘链不删 / reader 借用 arena / 进程级单例 / clone 图）全靠纪律维系，类型系统零检查。值语义槽 + 会话保活能解单个库内部的寿命问题，但那是「一个库内的解」，通用底座仍然缺失：libca 只有字符串专用 arena。
+libjbytecode 的混乱根因是**所有权从未被设计**：六套互不相同的后补制度（树节点手写析构循环 / Label 池 / InsnList 摘链不删 / reader 借用 arena / 进程级单例 / clone 图）全靠纪律维系，类型系统零检查。值语义槽 + 会话保活能解单个库内部的寿命问题，但那是一个库内的解，通用底座仍然缺失：libca 只有字符串专用 arena。
 
 libgarena v2 提供**双层**原语（arena 头注、generation 头注）：
 
-- **Layer A ``garena::Arena``**：通用 bump arena + 归属断言 + debug 悬垂检查——「一批对象有共同死亡点」的归宿；
-- **Layer B ``GenerationalArena<T>`` + ``GHandle{owner, slot, gen}``**：O(1) 增删、地址稳定、gen 校验防 ABA/UAF 的生成式句柄池——需要逐个增删、以稳定身份被引用的对象的归宿。
+- **Layer A ``garena::Arena``**：通用 bump arena + 归属断言 + debug 悬垂检查，一批对象有共同死亡点的归宿；
+- **Layer B ``GenerationalArena<T>`` + ``GHandle{owner, slot, gen}``**：O(1) 增删、地址稳定、gen 校验防 ABA/UAF 的生成式句柄池，需要逐个增删、以稳定身份被引用的对象的归宿。
 
 选型判据：有共同死亡点 → Layer A bump Arena；逐个增删 + 句柄引用 → Layer B GenerationalArena；确需共享可变所有权 → 引用计数（``ca::str::Utf8StringPool``，本库不提供）；字符串 arena → ``ca::str::Utf8StringArena``\（intern 去重），本库不包装、不平行实现。
 
@@ -24,11 +24,11 @@ libgarena v2 提供**双层**原语（arena 头注、generation 头注）：
 所有权治理三原则
 ^^^^^^^^^^^^^^^^
 
-定位句「把内存所有权治理做成可复用的库原语」由三条原则支撑，本库逐条给出机制化答案（而非纪律约束）：
+定位句把内存所有权治理做成可复用的库原语由三条原则支撑，本库逐条给出机制化答案（而非纪律约束）：
 
-1. **所有权结构性**：对象的寿命归属在结构上成立——「共同死亡点」的产物进 Arena，逐个增删的对象进句柄池，不存在靠注释维系的第三种隐式约定；
-2. **类型可见**：``TypedArena<Node>::create``、``GenerationalArena<Insn>`` + ``GHandle`` 把「产物寿命 = 池寿命」「身份 = 句柄」写进类型签名，调用点与 review 即可见；
-3. **可执行检查**：gen 校验使悬垂/ABA 确定性可检（release 生效）、debug 借用登记断言（``GARENA_MARK_BORROWED``/``GARENA_MARK_RETURNED``）、debug 下 reset 毒化——「不得使用失效指针」从口头纪律变成可执行断言。
+1. **所有权结构性**：对象的寿命归属在结构上成立，共同死亡点的产物进 Arena，逐个增删的对象进句柄池，不存在靠注释维系的第三种隐式约定；
+2. **类型可见**：``TypedArena<Node>::create``、``GenerationalArena<Insn>`` + ``GHandle`` 把产物寿命 = 池寿命身份 = 句柄写进类型签名，调用点与 review 即可见；
+3. **可执行检查**：gen 校验使悬垂/ABA 确定性可检（release 生效）、debug 借用登记断言（``GARENA_MARK_BORROWED``/``GARENA_MARK_RETURNED``）、debug 下 reset 毒化，不得使用失效指针从口头纪律变成可执行断言。
 
 .. _design-layer-a:
 
@@ -37,10 +37,10 @@ libgarena v2 提供**双层**原语（arena 头注、generation 头注）：
 
 1. **地址稳定**：已分配内存永不挪动，指针在 reset()/析构 前始终有效。（``ca::str::Utf8StringArena`` 提供的正是同款契约，本库把它推广到任意对象。）
 2. **无逐条释放**：单个对象没有 free/delete；non-trivial 析构由 arena 登记，reset()/析构 时**逆序**统一执行（后构造先析构，与栈语义一致）。
-3. **reset 红线**：reset()/析构 后所有旧指针失效。reset 复用已有 chunk 内存（不归还 malloc），bump 游标回首块、从首块重新开始（缺陷#12：此前多 chunk 下只从末块恢复，前面块跨周期搁浅、同等负载反复追加新 chunk，总量无界增长）——「reset 后旧指针恰好又被分配出去」是必须靠纪律不做的事，debug 悬垂检查（见 :ref:`design-dangle-check`）把这条纪律变成可执行断言。
+3. **reset 红线**：reset()/析构 后所有旧指针失效。reset 复用已有 chunk 内存（不归还 malloc），bump 游标回首块、从首块重新开始（缺陷#12：此前多 chunk 下只从末块恢复，前面块跨周期搁浅、同等负载反复追加新 chunk，总量无界增长），reset 后旧指针恰好又被分配出去是必须靠纪律不做的事，debug 悬垂检查（见 :ref:`design-dangle-check`）把这条纪律变成可执行断言。
 4. **非线程安全**：单线程顺序模型，与 Utf8StringArena 一致（Layer B 同）。
 5. **move 语义**：chunk 所有权整体转移，旧 Arena 变空壳；地址稳定契约不破坏。
-6. **分配失败策略（v2 成文，缺陷#6）**：malloc/realloc 失败或请求尺寸溢出（> ``kMaxAlloc`` = SIZE_MAX/2）一律 ``std::abort``\（带消息）；不抛异常、不返回空指针。唯一例外：``alloc(0, align)`` 返回 nullptr——**空请求无地址语义**\（缺陷#2 改约，v0.1 的「可用作哨兵」注释作废；``createArray(0)`` 同约）。例外只覆盖空请求本身：align > kMaxAlloc 即使 bytes==0 也 abort（缺陷#14 收口——非法对齐只可能来自调用方尺寸计算错误，放行会掩盖它）。
+6. **分配失败策略（v2 成文，缺陷#6）**：malloc/realloc 失败或请求尺寸溢出（> ``kMaxAlloc`` = SIZE_MAX/2）一律 ``std::abort``\（带消息）；不抛异常、不返回空指针。唯一例外：``alloc(0, align)`` 返回 nullptr，**空请求无地址语义**\（缺陷#2 改约，v0.1 的可用作哨兵注释作废；``createArray(0)`` 同约）。例外只覆盖空请求本身：align > kMaxAlloc 即使 bytes==0 也 abort（缺陷#14 收口，非法对齐只可能来自调用方尺寸计算错误，放行会掩盖它）。
 
 .. _design-alloc-strategy:
 
@@ -49,10 +49,10 @@ libgarena v2 提供**双层**原语（arena 头注、generation 头注）：
 
 - chunk 链（动态数组持有），默认首块 64KB（对齐 Utf8StringArena）；当前块放不下 → bump 游标移到下一既有块（放不下的块剩余空间本周期搁浅），既有块全满才新 chunk，容量翻倍（首块 → 2× → 4× …）；分配 = 对齐 bump，游标单调推进摊销 O(1)（缺陷#12）；
 - **trivial T：零 per-allocation 元数据**；
-- **non-trivial T：每对象（数组按数组）一条 DtorEntry 登记（x64 上 ≈32B）**，reset 逆序执行——dtor 内可以安全访问同 arena 中**先于自己构造**的对象。诊断 API ``dtor_registrations()`` / ``dtor_overhead_bytes()`` 可观测；
+- **non-trivial T：每对象（数组按数组）一条 DtorEntry 登记（x64 上 ≈32B）**，reset 逆序执行，dtor 内可以安全访问同 arena 中**先于自己构造**的对象。诊断 API ``dtor_registrations()`` / ``dtor_overhead_bytes()`` 可观测；
 - ``alloc()`` 入口做尺寸溢出检查（缺陷#1），``growChunk`` 用带进位加法、回绕即 abort，且对齐放大前先判 want > kMaxAlloc（缺陷#14：bytes/align 各自合法但和近 SIZE_MAX 时 alignUp 会回绕出 0，旧实现以 internal error 误报）；
 - ``create``/``createArray`` 构造抛出均回退 bump（缺陷#5/#13）：createArray 第 k 个元素抛出时逆序析构前 k-1 个；两者都把 bump 游标回退到分配前位置后重抛，不泄漏半构造对象（约束：构造不得再向本 arena 分配内存，否则回退波及嵌套产物）；
-- debug 下 ``reset()`` 析构后对全部 chunk 填 ``0xDD`` 毒化（缺陷#4 的 raw 指针面）：使「reset 后继续用旧指针」大概率立即崩溃。**检查边界**：毒化只提高崩溃概率，不是确定性检查；确定性的「死而可检」在 Layer B（gen 句柄）；
+- debug 下 ``reset()`` 析构后对全部 chunk 填 ``0xDD`` 毒化（缺陷#4 的 raw 指针面）：使reset 后继续用旧指针大概率立即崩溃。**检查边界**：毒化只提高崩溃概率，不是确定性检查；确定性的死而可检在 Layer B（gen 句柄）；
 - ``owns()`` 为基址有序数组 + 二分 + 最近命中缓存（缺陷#8；chunk 按基址插入有序，创建是低频事件）。**注意**：``owns()`` 仅限诊断/归属判别等低频路径（release 的诊断性使用亦合法），不得进入 alloc/create 逐元素分配热路径。
 
 .. _design-dangle-check:
@@ -62,16 +62,16 @@ libgarena v2 提供**双层**原语（arena 头注、generation 头注）：
 
 ``GARENA_MARK_BORROWED(p)`` / ``GARENA_MARK_RETURNED(p)``\（NDEBUG 下空操作，零开销）：消费者把从 arena 借出的视图显式登记/归还；``Arena::reset()``/析构 时若仍有未归还且落在本 arena chunk 范围内的借用，abort 并报指针。
 
-v2 计数化（缺陷#3）：登记表为 指针 → 借用计数 的 map（v0.1 为集合去重，同一地址两次借出、一次归还会漏报）。归零才移除；**归还多于借出（下溢）同样 abort**——成对性本身是被检查对象。
+v2 计数化（缺陷#3）：登记表为 指针 → 借用计数 的 map（v0.1 为集合去重，同一地址两次借出、一次归还会漏报）。归零才移除；**归还多于借出（下溢）同样 abort**，成对性本身是被检查对象。
 
-已知局限：登记按指针值；同一地址先归还再借出是干净的（测试覆盖）；「归还后仍持有副本」无法检测（登记的是意图，不是全部副本）。
+已知局限：登记按指针值；同一地址先归还再借出是干净的（测试覆盖）；归还后仍持有副本无法检测（登记的是意图，不是全部副本）。
 
 .. _design-typed-arena:
 
 4. TypedArena<T>（typed_arena 头注）
 ------------------------------------
 
-借用 Arena 的类型化便捷层（header-only）：**视图值语义**——拷贝/赋值是浅拷贝，两个视图指向同一 Arena（缺陷#9 成文）；不拥有 Arena，Arena 必须活得比它久（仅文档约定，不做运行期 outlive 检查，非目标）。价值在签名——``TypedArena<Node>::create`` 让「产物寿命 = 整池寿命」类型可见。
+借用 Arena 的类型化便捷层（header-only）：**视图值语义**，拷贝/赋值是浅拷贝，两个视图指向同一 Arena（缺陷#9 成文）；不拥有 Arena，Arena 必须活得比它久（仅文档约定，不做运行期 outlive 检查，非目标）。价值在签名，``TypedArena<Node>::create`` 让产物寿命 = 整池寿命类型可见。
 
 .. _design-layer-b:
 
@@ -79,13 +79,13 @@ v2 计数化（缺陷#3）：登记表为 指针 → 借用计数 的 map（v0.1
 ----------------------------------------------------
 
 1. **句柄**：``GHandle{owner: u32, slot: u32, gen: u32}``，12 字节 trivially copyable。``owner`` 是实例进程级唯一代号（自增分配，从 1 起，0 留给 kNoHandle/被移动壳）；``remove``/``clear``/构造失败 均使 gen+1，旧句柄立即失效，**不存在 ABA**。gen u32 回绕需单槽 2^32 次删除，实践不可达，为记录在案的接受界；owner 代号源同为 u32 自增，回绕同样不处理（2^32 次池实例化实践不可达，同族接受界）。
-2. **地址稳定**：T 存储在块链（每块 block_slots 个 T，默认 1024；块 malloc 后永不搬动/归还）；槽位元数据在旁路 vector，地址不对外（每槽 12B：gen/next_free/alive，x64 含填充；存储保留不归还，与 Layer A chunk 复用同哲学）。``T*`` 在 remove(该槽) 或池析构 前恒定——IR 节点互指的前提。
+2. **地址稳定**：T 存储在块链（每块 block_slots 个 T，默认 1024；块 malloc 后永不搬动/归还）；槽位元数据在旁路 vector，地址不对外（每槽 12B：gen/next_free/alive，x64 含填充；存储保留不归还，与 Layer A chunk 复用同哲学）。``T*`` 在 remove(该槽) 或池析构 前恒定，IR 节点互指的前提。
 3. **O(1) 增删**：create 走空闲链或追加；remove 校验后原地析构 T、gen+1、槽入空闲链。
-4. **校验分级**：``try_get``/``alive`` 全构建校验，slot/gen 失配分别返回 nullptr/false（预期失败路径）；``get`` 失配 **abort**\（打印期望/实际 owner-slot-gen，**release 也启用**），确定性失败优于 UB——use-after-free 在 release 即可检。**不提供 operator[]**。**owner 失配（跨实例使用句柄）结构性拒绝**：debug 一律 abort（try_get/get/alive/remove 都是「使用」）；release 下 try_get/alive 返回 false/nullptr、get abort、remove 返回 false。
-5. **clear()**：全部置死 + 每槽 gen+1，保留存储。析构序为**槽序降序**\（slot 下标从高到低），非创建序——槽复用后两者不同，不提供「后建先毁」保证（析构函数不得依赖同池其他元素的存亡序）。与 Layer A reset 的关键差异：clear 后旧句柄**必然**校验失败，而 reset 后旧指针不可检。
-6. **异常安全**：create 中 T 构造抛出 → 槽置死、gen+1、重入空闲链后重抛，不发布半构造对象。系统级分配失败（块/元数据 malloc）与 Layer A 同约：abort，不抛 bad_alloc——create 的唯一异常源是 T 的构造函数。构造期间槽已出空闲链但未发布；T 的构造函数不得重入本池的 ``clear()`` 或移动/销毁本池（正在构造的槽会被一并清空或存储被释放），重入 create/reserve 受支持。
+4. **校验分级**：``try_get``/``alive`` 全构建校验，slot/gen 失配分别返回 nullptr/false（预期失败路径）；``get`` 失配 **abort**\（打印期望/实际 owner-slot-gen，**release 也启用**），确定性失败优于 UB，use-after-free 在 release 即可检。**不提供 operator[]**。**owner 失配（跨实例使用句柄）结构性拒绝**：debug 一律 abort（try_get/get/alive/remove 都是使用）；release 下 try_get/alive 返回 false/nullptr、get abort、remove 返回 false。
+5. **clear()**：全部置死 + 每槽 gen+1，保留存储。析构序为**槽序降序**\（slot 下标从高到低），非创建序，槽复用后两者不同，不提供后建先毁保证（析构函数不得依赖同池其他元素的存亡序）。与 Layer A reset 的关键差异：clear 后旧句柄**必然**校验失败，而 reset 后旧指针不可检。
+6. **异常安全**：create 中 T 构造抛出 → 槽置死、gen+1、重入空闲链后重抛，不发布半构造对象。系统级分配失败（块/元数据 malloc）与 Layer A 同约：abort，不抛 bad_alloc，create 的唯一异常源是 T 的构造函数。构造期间槽已出空闲链但未发布；T 的构造函数不得重入本池的 ``clear()`` 或移动/销毁本池（正在构造的槽会被一并清空或存储被释放），重入 create/reserve 受支持。
 7. **move**：move-only；移动转移块与元数据，owner 不变；被移动壳 owner 归零。
-8. **与 dangle_check 的关系**：Layer B 是「裸指针借出后对象死亡」的类型层解；仍以 ``T*`` 短暂借出的场景沿用登记宏。``remove()`` 对该槽存储范围、析构对整池块存储范围做未归还借用断言（debug，与 Arena::reset 同规）；析构不按活对象数短路——已 remove 的槽仍可能有残留借用。
+8. **与 dangle_check 的关系**：Layer B 是裸指针借出后对象死亡的类型层解；仍以 ``T*`` 短暂借出的场景沿用登记宏。``remove()`` 对该槽存储范围、析构对整池块存储范围做未归还借用断言（debug，与 Arena::reset 同规）；析构不按活对象数短路，已 remove 的槽仍可能有残留借用。
 
 .. _design-handle-dialect:
 
@@ -116,20 +116,20 @@ GHandle 采用业界常见的 generation handle 方言：字段顺序与宽度�
 
 - v0.1：Arena + TypedArena + dangle_check（17 测试）。
 - v2（2026-09-09，本文）：Layer A 缺陷闭环（#1–#11）+ Layer B GenerationalArena/GHandle 新增。public 头不再注入 ``using ca::usize``\（缺陷#10，未保留过渡别名，调用方显式写 ``ca::usize``）；悬空文档引用修正（缺陷#11）。
-- v2.1（2026-10-30，审查修缮）：缺陷#12–#14 闭环——多 chunk reset 游标回首块（跨 reset 周期内存有界）；``Arena::create`` 构造抛出回退 bump（与 createArray 对齐）；growChunk 对齐放大前先判溢出 + ``alloc(0)`` 不放行非法对齐（溢出诊断口径统一）。文档对齐：reset 注释、clear() 析构序（槽序降序非创建序）、owner 回绕记录为接受界。
+- v2.1（2026-10-30，审查修缮）：缺陷#12–#14 闭环，多 chunk reset 游标回首块（跨 reset 周期内存有界）；``Arena::create`` 构造抛出回退 bump（与 createArray 对齐）；growChunk 对齐放大前先判溢出 + ``alloc(0)`` 不放行非法对齐（溢出诊断口径统一）。文档对齐：reset 注释、clear() 析构序（槽序降序非创建序）、owner 回绕记录为接受界。
 
 .. _design-verification:
 
 9. 验证记录
 -----------
 
-- 2026-09-09（v2）：libgarena_unittest × 三构建全绿——
+- 2026-09-09（v2）：libgarena_unittest × 三构建全绿，
   - release（``xmake f -m release --with_tests=y``）：43 用例；
   - debug（``xmake f -m debug --with_tests=y``）：46 用例（含 debug 专属的 3 条计数化悬垂用例；死亡测试全部实跑：get 失配 abort、跨实例 try_get/get 的 owner 拒绝、dangle 下溢 abort、remove 未归还借用 abort、分配溢出 abort、reset 0xDD 毒化）；跑毕已切回默认 release 配置；
   - ASan（``xmake f --with_tests=y --with_asan=y``）：43 用例零报告（linux/gcc、clang 路径；当时开关只作用于 unittest 目标，库源码未插桩，2026-10-21 已移到根作用域；MSVC 上该开关不生效）。
-- 2026-10-11（质量审查）：注释/文档与实现对齐（createArray 值初始化语义、``owns()`` 使用口径、悬空文档引用）+ 测试补缺（``GenerationalArena::owns``、createArray 值初始化 pin、``TypedArena::createArray``）+ ensureSlots 槽位 u32 域防御检查——windows/MSVC 双构建实跑：release 46 用例、debug 49 用例全绿，死亡测试全部实跑。
-- 2026-10-11（测试 skip 审计）：两配置全量实跑——release 46 / debug 49 全绿，输出无 [ SKIPPED ]、无 disabled 计数；用例数差恒为 3 = debug 专属的计数化悬垂用例（``#ifndef NDEBUG``：部分归还检出、全归还干净、下溢 abort）。死亡测试分级实跑：分配溢出 / get 失配 / 跨实例 get 为全构建；跨实例 try_get release 断言 nullptr、debug 死亡测试；dangle 借用类与 reset 毒化仅 debug 实跑（release 分支 GTEST_SUCCEED 为既定配置门控，非缺陷掩盖）。排查结论：unittest 5 文件全部收录于 xmake.lua（无孤儿）；try/catch 均带 try 内 FAIL、循环断言定长或前置 ASSERT 守卫、无提前 return——无空跑掩盖缺陷；``#ifdef _WIN32`` 仅切换死亡判定（MSVC 退出码 3 / POSIX SIGABRT），不移除测试。CI（ci.yml）按默认 release 口径跑双平台，debug 为 README 约定的发布前人工步骤。
-- 2026-10-21（Layer B 契约对齐）：create 在构造后重新获取槽元数据（构造期重入 reserve/create 不再留下悬垂引用）、析构的借用断言不再按 live_count\_ 短路、get(kNoHandle) 报 null handle、成员注释与契约 3 的 owner 失配分级对齐——windows/MSVC 实跑：release 49 用例、debug 52 用例全绿。新增 3 条用例在旧代码上均先失败：get(kNoHandle) 误报 owner mismatch、构造期 reserve 后外层句柄指向死槽、已 remove 槽的残留借用未被析构检出。文档修正：#1–#12 改为 #1–#11（实际只记录 #1–#11）、合并重复的 Utf8StringPool 表格行、移除未定义的 DEV-15 标注。
+- 2026-10-11（质量审查）：注释/文档与实现对齐（createArray 值初始化语义、``owns()`` 使用口径、悬空文档引用）+ 测试补缺（``GenerationalArena::owns``、createArray 值初始化 pin、``TypedArena::createArray``）+ ensureSlots 槽位 u32 域防御检查，windows/MSVC 双构建实跑：release 46 用例、debug 49 用例全绿，死亡测试全部实跑。
+- 2026-10-11（测试 skip 审计）：两配置全量实跑，release 46 / debug 49 全绿，输出无 [ SKIPPED ]、无 disabled 计数；用例数差恒为 3 = debug 专属的计数化悬垂用例（``#ifndef NDEBUG``：部分归还检出、全归还干净、下溢 abort）。死亡测试分级实跑：分配溢出 / get 失配 / 跨实例 get 为全构建；跨实例 try_get release 断言 nullptr、debug 死亡测试；dangle 借用类与 reset 毒化仅 debug 实跑（release 分支 GTEST_SUCCEED 为既定配置门控，非缺陷掩盖）。排查结论：unittest 5 文件全部收录于 xmake.lua（无孤儿）；try/catch 均带 try 内 FAIL、循环断言定长或前置 ASSERT 守卫、无提前 return，无空跑掩盖缺陷；``#ifdef _WIN32`` 仅切换死亡判定（MSVC 退出码 3 / POSIX SIGABRT），不移除测试。CI（ci.yml）按默认 release 口径跑双平台，debug 为 README 约定的发布前人工步骤。
+- 2026-10-21（Layer B 契约对齐）：create 在构造后重新获取槽元数据（构造期重入 reserve/create 不再留下悬垂引用）、析构的借用断言不再按 live_count\_ 短路、get(kNoHandle) 报 null handle、成员注释与契约 3 的 owner 失配分级对齐，windows/MSVC 实跑：release 49 用例、debug 52 用例全绿。新增 3 条用例在旧代码上均先失败：get(kNoHandle) 误报 owner mismatch、构造期 reserve 后外层句柄指向死槽、已 remove 槽的残留借用未被析构检出。文档修正：#1–#12 改为 #1–#11（实际只记录 #1–#11）、合并重复的 Utf8StringPool 表格行、移除未定义的 DEV-15 标注。
 - 2026-10-30（审查修缮 #12–#14）：windows/MSVC 双构建实跑：release 55 用例、debug 55 用例全绿（新增：多 chunk reset 从首块回归 + 跨周期零新 chunk、Arena::create 构造抛出回退 bump、活槽借用下池析构 abort、growChunk bytes+align 近 SIZE_MAX 的溢出消息、alloc(0) 非法对齐 abort）。行为复核：多 chunk arena（首块 256B）reset 后首分配回到首块原址，同等负载（201×64B，跨 6 chunk）反复 reset/refill 零新增 chunk（修复前每周期膨胀 ~8KB、旧块永久搁浅）。
 
 能力清单（冻结 API 签名级一览）见 :doc:`capabilities`。

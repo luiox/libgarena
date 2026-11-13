@@ -13,7 +13,7 @@
 ///  5. move 语义：move-only；move 后旧 arena 变空壳，chunk 所有权整体转移；
 ///  6. 分配失败策略（v2 成文）：底层 malloc/realloc 失败或请求尺寸溢出
 ///     （> kMaxAlloc）一律 std::abort（带消息）。本库不抛异常、不返回空指针；
-///     唯一例外：alloc(0, align) 返回 nullptr（空请求无地址语义——v2 起改约，
+///     唯一例外：alloc(0, align) 返回 nullptr（空请求无地址语义，v2 起改约，
 ///     v0.1 的"可用作哨兵"注释作废）。例外只覆盖空请求本身：align > kMaxAlloc
 ///     即使 bytes==0 也 abort（缺陷#14 收口：非法对齐只可能来自调用方尺寸
 ///     计算错误，放行会掩盖它）。
@@ -40,7 +40,7 @@ namespace garena {
 inline constexpr ca::usize kMaxAlloc = (~static_cast<ca::usize>(0)) / 2;
 
 /// 尺寸计算溢出 → abort（契约 6；模板 createArray 与 .cpp 共用，缺陷#1）。
-/// 注：声明必须先于 class Arena——成员模板 createArray 体内无限定调用它，
+/// 注：声明必须先于 class Arena，成员模板 createArray 体内无限定调用它，
 /// GCC 两阶段查找要求其类定义前可见（MSVC 宽容，Linux CI 实证报错）。
 [[noreturn]] void abortSizeOverflow();
 
@@ -89,7 +89,7 @@ public:
     /// 构造 T 的数组（元素个数运行期决定，值初始化：标量元素零初始化）。
     /// non-trivial 析构同样被接管。
     /// count == 0 返回 nullptr。异常安全（缺陷#5）：第 k 个元素构造抛出时，
-    /// 逆序析构已构造的前 k-1 个、把 bump 回退到分配前位置后重抛——
+    /// 逆序析构已构造的前 k-1 个、把 bump 回退到分配前位置后重抛，
     /// 不泄漏半构造数组（含数组存储本身）。
     /// （约束：T 的构造函数不得再向本 arena 分配内存，否则回退会波及嵌套产物。）
     template <class T>
@@ -121,7 +121,7 @@ public:
     /// 指针是否落在本 arena 的某个 chunk 内（含已分配与未使用的 chunk 空间）。
     /// 归属判别/诊断口径；范围判定，不追踪逐块 allocated 边界。
     /// v2 起内部为基址有序二分 + 最近命中缓存（缺陷#8），单次 O(log chunks)、
-    /// 缓存命中 O(1)。口径：诊断断言与「迁移期混合清除」的节点归属
+    /// 缓存命中 O(1)。口径：诊断断言与迁移期混合清除的节点归属
     /// 判别（如 libjbytecode InsnList::disposeNode，release 也生效）是合法消费方；
     /// 不得进入 alloc/create 这类逐元素分配热路径。
     bool owns(const void* p) const noexcept;

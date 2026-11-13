@@ -64,9 +64,9 @@ static_assert(std::is_trivially_copyable_v<GHandle>, "GHandle must be trivially 
 ///     任何既有 T*。槽位元数据在旁路 vector 中，可自由 realloc、地址不对外。
 ///  2. 单元素真删：remove(h) 原地析构 T、gen+1、槽入空闲链，O(1)。存储保留
 ///     （不归还，与 Layer A chunk 复用同哲学）。
-///  3. 校验行为：slot/gen 失配（越界、gen 不等、槽已死）——try_get/alive 全构建
+///  3. 校验行为：slot/gen 失配（越界、gen 不等、槽已死），try_get/alive 全构建
 ///     返回 nullptr/false（预期失败路径，热路径可用）；get 同样校验，失配
-///     abort（打印期望/实际 owner-slot-gen）——release 也启用，确定性失败优于
+///     abort（打印期望/实际 owner-slot-gen），release 也启用，确定性失败优于
 ///     UB。owner 失配（跨实例使用句柄）是结构性错误，按冻结规格区别对待：
 ///     debug 一律 abort（try_get/get/alive/remove 都是"使用"）；release 下
 ///     try_get/alive 返回 nullptr/false、get abort、remove 返回 false。
@@ -75,7 +75,7 @@ static_assert(std::is_trivially_copyable_v<GHandle>, "GHandle must be trivially 
 ///     clear 后旧句柄必然校验失败，而 reset 后旧指针不可检。clear 不复用 gen 值。
 ///  5. 异常安全：create 中 T 构造抛出 → 槽置死、gen+1、重入空闲链后重抛，
 ///     不发布半构造对象。构造期间槽已出空闲链但尚未发布；T 的构造函数不得
-///     重入本池的 clear() 或移动/销毁本池——正在构造的槽会被一并清空或存储
+///     重入本池的 clear() 或移动/销毁本池，正在构造的槽会被一并清空或存储
 ///     被释放。重入 create/reserve 受支持（create 在构造后重新获取槽元数据，
 ///     不持有跨构造期的引用）。
 ///  6. 非线程安全：单线程顺序模型，与 garena::Arena 一致。
@@ -131,7 +131,7 @@ public:
     bool     remove(Handle h);
 
     /// 全部置死：析构全部活元素、每个槽 gen+1、空闲链重置为全槽。保留存储。
-    /// O(n)。析构序为槽序降序（slot 下标从高到低）——**非创建序**：槽复用后
+    /// O(n)。析构序为槽序降序（slot 下标从高到低），**非创建序**：槽复用后
     /// 两者不同，不提供"后建先毁"保证（析构函数不得依赖同池其他元素的存亡序）。
     void     clear() noexcept;
 
@@ -318,7 +318,7 @@ void GenerationalArena<T>::abortMismatch(Handle h) const {
 template <class T>
 void GenerationalArena<T>::ensureSlots(ca::usize n) {
     if (n <= slots_.size()) return;
-    ///< 契约 8：溢出先判后乘——块字节数/块数任一回绕即 abort，不静默欠额
+    ///< 契约 8：溢出先判后乘，块字节数/块数任一回绕即 abort，不静默欠额
     if (block_slots_ > (kMaxAlloc - (alignof(T) - 1)) / sizeof(T)) {
         abortSizeOverflow();
     }
@@ -330,7 +330,7 @@ void GenerationalArena<T>::ensureSlots(ca::usize n) {
     const ca::usize old_cap = slots_.size();
     const ca::usize new_cap = num_blocks * block_slots_;
     ///< 槽位下标域为 u32（GHandle.slot / 空闲链 next_free）：new_cap 越过
-    ///< kInvalidSlot 后下方 static_cast 会静默截断、破坏空闲链——先判后扩，
+    ///< kInvalidSlot 后下方 static_cast 会静默截断、破坏空闲链，先判后扩，
     ///< 与上方块数溢出检查同族（契约 8）。
     ///< == kInvalidSlot 时放行是刻意的：最大合法槽位下标为 kInvalidSlot-1，
     ///< 与空闲链 sentinel 不重合

@@ -49,7 +49,7 @@ TEST(ArenaTest, AddressStableAcrossGrowth) {
         ptrs.push_back(a.alloc(64, 16));
     }
     // 地址稳定契约 = 扩容不搬移旧数据：写入带槽位特征值，最后统一校验。
-    // 不做跨 chunk 地址单调断言——同 chunk 内 bump 递增，但新 chunk 的
+    // 不做跨 chunk 地址单调断言，同 chunk 内 bump 递增，但新 chunk 的
     // OS 分配地址不保证更高，单调性在 chunk 边界上无契约含义（偶发翻车）。
     for (usize i = 0; i < ptrs.size(); ++i) {
         ASSERT_TRUE(a.owns(ptrs[i]));
@@ -316,7 +316,7 @@ TEST(ArenaTest, DtorRegistrationDiagnostics) {
     EXPECT_EQ(a.dtor_overhead_bytes(), 0);
 }
 
-/// 缺陷#8：owns() 二分——大量 chunk（乱序基址可能）下归属判定仍正确。
+/// 缺陷#8：owns() 二分，大量 chunk（乱序基址可能）下归属判定仍正确。
 TEST(ArenaTest, OwnsBinaryOverManyChunks) {
     garena::Arena a(256);
     std::vector<void*> ptrs;
@@ -353,7 +353,7 @@ TEST(ArenaTest, SizeOverflowAborts) {
             a.createArray<int>(garena::kMaxAlloc / sizeof(int) + 1);
         },
         kAborted, "garena: allocation size overflow");
-    /// 缺陷#14：bytes/align 各自 ≤ kMaxAlloc、但和近 SIZE_MAX——旧实现
+    /// 缺陷#14：bytes/align 各自 ≤ kMaxAlloc、但和近 SIZE_MAX，旧实现
     /// alignUp 回绕出 want=0，以 internal error / OOM(0 bytes) 误报
     ASSERT_EXIT(
         {

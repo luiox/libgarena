@@ -143,7 +143,7 @@ TEST(GenerationTest, SlotReuseBumpsGenerationABA) {
 }
 
 TEST(GenerationTest, GetAfterRemoveAborts) {
-    ///< 冻结规格：get 失配 abort，release 也启用 —— debug/release 双构建实跑。
+    ///< 冻结规格：get 失配 abort，release 也启用，debug/release 双构建实跑。
     GenerationalArena<Item> pool;
     GHandle h = pool.create(1);
     pool.remove(h);
@@ -224,7 +224,7 @@ TEST(GenerationTest, ForeignHandleRejectedByTryGet) {
 #ifdef NDEBUG
     EXPECT_EQ(b.try_get(h), nullptr);  ///< release：返回 nullptr
 #else
-    ///< debug：结构性拒绝 —— 使用跨实例句柄直接 abort（见 doc:design-layer-b 校验分级）
+    ///< debug：结构性拒绝，使用跨实例句柄直接 abort（见 doc:design-layer-b 校验分级）
     ASSERT_EXIT({ (void)b.try_get(h); }, kAborted, "garena: handle rejected.*owner mismatch");
 #endif
 }
@@ -363,7 +363,7 @@ TEST(GenerationTest, ReservePreextendsWithoutMovingStorage) {
     EXPECT_EQ(pool.size(), 1000u);
 }
 
-/// owns：范围判定口径（与 Layer A 一致）——块内未用区域也属本池；外部/跨池指针为 false。
+/// owns：范围判定口径（与 Layer A 一致），块内未用区域也属本池；外部/跨池指针为 false。
 TEST(GenerationTest, OwnsChecksBlockStorageRange) {
     GenerationalArena<Item> pool(4);
     GHandle h = pool.create(1);

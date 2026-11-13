@@ -70,7 +70,7 @@ Arena& Arena::operator=(Arena&& other) noexcept {
 
 void* Arena::alloc(ca::usize bytes, ca::usize align) {
     if (align == 0) align = 1;
-    if (bytes > kMaxAlloc || align > kMaxAlloc) abortSizeOverflow();  ///< 缺陷#1；先于空请求判定——align 非法即使 bytes==0 也 abort（缺陷#14）
+    if (bytes > kMaxAlloc || align > kMaxAlloc) abortSizeOverflow();  ///< 缺陷#1；先于空请求判定，align 非法即使 bytes==0 也 abort（缺陷#14）
     if (bytes == 0) return nullptr;  ///< 契约 6：空请求无地址语义（缺陷#2 改约）
     ///< 沿游标向后找（缺陷#12）：本块放不下则前移，剩余空间本周期搁浅；
     ///< 既有块全满才 growChunk。游标单调推进（rollback 除外），摊销 O(1)。
@@ -100,7 +100,7 @@ void Arena::growChunk(ca::usize min_bytes) {
     ca::usize want = next_chunk_bytes_ != 0 ? next_chunk_bytes_ : first_chunk_bytes_;
     if (want < min_bytes) want = min_bytes;
     ///< 缺陷#14：bytes+align 可达 ~SIZE_MAX（各自 ≤ kMaxAlloc 但和超出），先判
-    ///< 后对齐——alignUp(want,16) 对近 SIZE_MAX 的 want 会回绕出 0，旧实现
+    ///< 后对齐，alignUp(want,16) 对近 SIZE_MAX 的 want 会回绕出 0，旧实现
     ///< 以 internal error / OOM(0 bytes) 消息误报，此处给出溢出的确定性口径
     if (want > kMaxAlloc) abortSizeOverflow();
     want = alignUp(want, 16);
@@ -234,7 +234,7 @@ void Arena::reset() noexcept {
     }
 #endif
     for (ca::usize i = 0; i < chunk_count_; ++i) chunks_[i].used = 0;
-    bump_chunk_ = 0;       ///< 缺陷#12：游标回首块，从首块重新 bump——跨 reset 周期内存有界
+    bump_chunk_ = 0;       ///< 缺陷#12：游标回首块，从首块重新 bump，跨 reset 周期内存有界
     next_chunk_bytes_ = 0;  ///< 复用已有 chunk，容量策略从头开始
 }
 

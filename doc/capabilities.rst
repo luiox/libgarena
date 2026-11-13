@@ -67,7 +67,7 @@ garena::GenerationalArena<T> + GHandle（src/garena/generation.hpp，Layer B）
    * - ``bool remove(Handle)``
      - O(1) 删除：析构 T、gen+1、槽入空闲链；slot/gen 失配返回 false，owner 失配 release false / **debug abort**；debug 下槽内有未归还借用 → abort
    * - ``void clear()``
-     - 全部活槽置死并 gen+1，空闲链重置为全槽，保留存储；旧句柄此后必然失配。析构序为槽序降序（slot 下标从高到低），非创建序——不提供「后建先毁」保证
+     - 全部活槽置死并 gen+1，空闲链重置为全槽，保留存储；旧句柄此后必然失配。析构序为槽序降序（slot 下标从高到低），非创建序，不提供后建先毁保证
    * - ``usize size()`` / ``usize capacity()``
      - 活元素数 / 总槽位（含死槽）
    * - ``void reserve(usize n)``

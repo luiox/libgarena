@@ -15,15 +15,15 @@
 ///   GARENA_MARK_BORROWED(ptr);        // 借出
 ///   GARENA_MARK_RETURNED(ptr);        // 归还（用完立即成对）
 /// Arena::reset()/析构 时若仍有未归还且落在本 arena chunk 内的借用，
-/// 断言失败 —— 把「视图指向临时」从纪律变成可执行检查。
+/// 断言失败，把视图指向临时从纪律变成可执行检查。
 ///
 /// v2 计数化（缺陷#3）：登记表按 指针 → 借用计数 维护（v0.1 为集合去重，
 /// 同一地址两次借出、一次归还会把未归还借用从表里抹掉而漏报）。归零才移除；
-/// 「归还多于借出」（下溢）同样是被检查对象，直接 abort。
+/// 归还多于借出（下溢）同样是被检查对象，直接 abort。
 
 /// 诊断出口（定义在 dangle_check.cpp）。stderr 在 UCRT 仅为宏（无底层符号），
 /// 且可被上游头合法 \#undef 掉（subprocess.hpp 为暴露同名成员），任何 TU 的 include
-/// 顺序都可能让它失效——故全部 I/O 收敛到唯一 .cpp（stdio 最先包含、不碰
+/// 顺序都可能让它失效，故全部 I/O 收敛到唯一 .cpp（stdio 最先包含、不碰
 /// process 族头，stderr 宏必在）。打印后 abort，不返回。消息为 ASCII：死亡
 /// 测试的 stderr 正则依赖它（跨代码页稳定）。
 /// 声明无条件给出：generation.hpp 的 OOM/handle 拒收路径在 release（NDEBUG）
